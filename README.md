@@ -22,8 +22,8 @@ Real-time monitoring dashboard for Elasticsearch cluster upgrades. Track node ve
 
 1. Clone this repository:
 ```bash
-git clone <repo-url>
-cd "Chrome Extension"
+git clone https://github.com/musabdogan/elasticsearch-upgrade-monitoring.git
+cd elasticsearch-upgrade-monitoring
 ```
 
 2. Install dependencies:
@@ -70,7 +70,7 @@ node scripts/create-png-icons.js
 ## Project Structure
 
 ```
-Chrome Extension/
+elasticsearch-upgrade-monitoring/
 ├── dist/                  # Built extension (load this in Chrome)
 ├── public/
 │   ├── manifest.json      # Chrome extension manifest
