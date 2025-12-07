@@ -315,7 +315,7 @@ export default function App() {
 
       {snapshot && !connectionFailed ? (
         <>
-        <div className="flex-1 overflow-hidden flex flex-col gap-3 px-4 pb-4">
+        <div className="flex-1 overflow-y-auto flex flex-col gap-3 px-4 pt-4 pb-4">
           <section className="grid grid-cols-4 gap-3 flex-shrink-0">
             <div
               className={`flex h-24 flex-col justify-center rounded-lg px-4 py-3 text-center shadow-lg ${
@@ -394,7 +394,7 @@ export default function App() {
             </div>
           </section>
 
-          <section className="flex-1 grid grid-cols-12 gap-3 min-h-0">
+          <section className="grid grid-cols-12 gap-3 flex-shrink-0" style={{ minHeight: '400px' }}>
             <div className="flex flex-col col-span-7 rounded-lg border border-gray-300 bg-gradient-to-br from-white to-indigo-50 p-2 shadow-lg dark:from-gray-800 dark:to-indigo-900/20 dark:border-gray-600">
               <div className="mb-1 flex items-center justify-between flex-shrink-0">
                 <h2 className="text-xs font-bold text-gray-900 dark:text-gray-100">
@@ -646,7 +646,7 @@ export default function App() {
             </div>
           </section>
 
-          <section className="flex-1 grid grid-cols-12 gap-3 min-h-0">
+          <section className="grid grid-cols-12 gap-3 flex-shrink-0" style={{ minHeight: '400px' }}>
             <div className="flex flex-col col-span-7 rounded-lg border border-gray-300 bg-gradient-to-br from-white to-amber-50 p-2 shadow-lg dark:from-gray-800 dark:to-amber-900/20 dark:border-gray-600">
               <div className="mb-1 flex items-center justify-between flex-shrink-0">
                 <h2 className="text-xs font-bold text-gray-900 dark:text-gray-100">

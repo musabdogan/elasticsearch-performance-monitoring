@@ -28,7 +28,7 @@ export function ThemeToggle() {
             ? 'Dark mode (click to switch to system)' 
             : 'Light mode (click to switch to dark)'
       }
-      className="flex h-9 w-9 items-center justify-center rounded-lg border border-gray-300 bg-gray-100 text-gray-700 shadow-sm transition-all duration-200 hover:bg-gray-200 hover:text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700 dark:hover:text-white dark:focus:ring-offset-gray-900"
+      className="flex h-7 w-7 items-center justify-center rounded-lg border border-gray-300 bg-gray-100 text-gray-700 shadow-sm transition-all duration-200 hover:bg-gray-200 hover:text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700 dark:hover:text-white dark:focus:ring-offset-gray-900"
       onClick={handleClick}
       title={
         isSystem 
@@ -39,11 +39,11 @@ export function ThemeToggle() {
       }
     >
       {isSystem ? (
-        <Monitor className="h-4 w-4" />
+        <Monitor className="h-3 w-3" />
       ) : isDark ? (
-        <Sun className="h-4 w-4" />
+        <Sun className="h-3 w-3" />
       ) : (
-        <Moon className="h-4 w-4" />
+        <Moon className="h-3 w-3" />
       )}
     </button>
   );

@@ -123,15 +123,15 @@ export function ClusterSelector() {
 
   return (
     <div className="relative" ref={dropdownRef}>
-      <div className="flex items-center gap-2">
-        <div className="flex items-center gap-1.5 text-xs text-gray-700 dark:text-gray-300">
-          <Server className="h-3.5 w-3.5" />
+      <div className="flex items-center gap-1.5">
+        <div className="flex items-center gap-1 text-xs text-gray-700 dark:text-gray-300">
+          <Server className="h-3 w-3" />
           <span className="font-medium">Clusters:</span>
         </div>
         <button
           type="button"
           onClick={openDropdown}
-          className={`flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs shadow-sm transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 dark:focus:ring-offset-gray-900 ${
+          className={`flex items-center gap-1 rounded-lg border px-2 py-1 text-xs shadow-sm transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 dark:focus:ring-offset-gray-900 ${
             showDropdown
               ? 'border-blue-500 bg-blue-50 text-blue-700 dark:border-blue-400 dark:bg-blue-900/20 dark:text-blue-300'
               : 'border-gray-300 bg-white text-gray-900 hover:bg-gray-100 hover:shadow dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 dark:hover:bg-gray-600'
