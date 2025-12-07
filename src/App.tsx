@@ -381,7 +381,7 @@ export default function App() {
             </div>
           </section>
 
-          <section className="grid grid-cols-12 gap-3 flex-shrink-0" style={{ minHeight: '400px' }}>
+          <section className="flex-1 grid grid-cols-12 gap-3 min-h-0">
             <div className="flex flex-col col-span-7 rounded-lg border border-gray-300 bg-gradient-to-br from-white to-indigo-50 p-2 shadow-lg dark:from-gray-800 dark:to-indigo-900/20 dark:border-gray-600">
               <div className="mb-1 flex items-center justify-between flex-shrink-0">
                 <h2 className="text-xs font-bold text-gray-900 dark:text-gray-100">
@@ -658,7 +658,7 @@ export default function App() {
             </div>
           </section>
 
-          <section className="grid grid-cols-12 gap-3 flex-shrink-0" style={{ minHeight: '400px' }}>
+          <section className="flex-1 grid grid-cols-12 gap-3 min-h-0">
             <div className="flex flex-col col-span-7 rounded-lg border border-gray-300 bg-gradient-to-br from-white to-amber-50 p-2 shadow-lg dark:from-gray-800 dark:to-amber-900/20 dark:border-gray-600">
               <div className="mb-1 flex items-center justify-between flex-shrink-0">
                 <h2 className="text-xs font-bold text-gray-900 dark:text-gray-100">
