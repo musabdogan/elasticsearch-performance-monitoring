@@ -2,6 +2,10 @@
 
 Real-time monitoring dashboard for Elasticsearch cluster upgrades. Track node versions, shard recovery status, disk allocation, cluster health, and get upgrade order recommendations.
 
+## 🚀 Install from Chrome Web Store
+
+**[Install Elasticsearch Upgrade Monitoring](https://chromewebstore.google.com/detail/jdljadeddpdnfndepcdegkeoejjalegm?utm_source=item-share-cb)**
+
 ## Features
 
 - **Real-time Monitoring**: Live polling of cluster status, node versions, shard recovery, and allocation
@@ -17,6 +21,10 @@ Real-time monitoring dashboard for Elasticsearch cluster upgrades. Track node ve
 - **Direct Connection**: Connects directly to Elasticsearch clusters (no proxy needed)
 
 ## Installation
+
+### Chrome Web Store (Recommended)
+
+Install directly from the [Chrome Web Store](https://chromewebstore.google.com/detail/jdljadeddpdnfndepcdegkeoejjalegm?utm_source=item-share-cb) - no build required!
 
 ### Development Mode
 
