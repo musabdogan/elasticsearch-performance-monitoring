@@ -118,7 +118,6 @@ The extension requires the following permissions:
 
 - Credentials are stored locally in Chrome storage
 - All API calls are made directly from the browser (CORS handled by Chrome extension permissions)
-- Icons are placeholders - replace with proper icons for production
 
 ## License
 
