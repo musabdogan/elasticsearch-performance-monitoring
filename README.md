@@ -2,6 +2,9 @@
 
 Real-time monitoring dashboard for Elasticsearch cluster upgrades. Track node versions, shard recovery status, disk allocation, cluster health, and get upgrade order recommendations.
 
+<img width="1280" height="800" alt="image" src="https://github.com/user-attachments/assets/763f4f65-8c03-4b30-b04e-e89dad3eebd0" />
+
+
 ## 🚀 Install from Chrome Web Store
 
 **[Install Elasticsearch Upgrade Monitoring](https://chromewebstore.google.com/detail/jdljadeddpdnfndepcdegkeoejjalegm?utm_source=item-share-cb)**
