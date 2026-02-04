@@ -4,6 +4,23 @@ export function formatNumber(value: number): string {
   return Intl.NumberFormat('en-US').format(value);
 }
 
+/**
+ * Format bytes to human-readable string (B, KB, MB, GB, TB)
+ */
+export function formatBytes(bytes: number | string): string {
+  const n = typeof bytes === 'number' ? bytes : parseInt(String(bytes), 10) || 0;
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  let value = n;
+  let unitIndex = 0;
+
+  while (value >= 1024 && unitIndex < units.length - 1) {
+    value /= 1024;
+    unitIndex++;
+  }
+
+  return `${value.toFixed(1)} ${units[unitIndex]}`;
+}
+
 export function statusToColor(status: ClusterStatus): string {
   switch (status) {
     case 'green':

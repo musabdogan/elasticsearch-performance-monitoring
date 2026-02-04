@@ -11,23 +11,27 @@ import {
 import { toast } from 'sonner';
 import { apiConfig } from '@/config/api';
 import {
+  getNodeStats,
+  getIndexStats,
+  getIndices,
+  getClusterHealth,
+  getNodes,
+  getAllocation,
+  getCatHealth,
+  checkClusterHealth,
   flushCluster,
   disableShardAllocation,
   stopShardRebalance,
   enableShardAllocation,
-  enableShardRebalance,
-  getAllocation,
-  getCatHealth,
-  getClusterHealth,
-  getClusterSettings,
-  getNodes,
-  getRecovery,
-  checkClusterHealth
+  enableShardRebalance
 } from '@/services/elasticsearch';
+import { PerformanceTracker } from '@/utils/performanceTracker';
 import type {
   CatHealthRow,
   ClusterStatus,
-  MonitoringSnapshot
+  MonitoringSnapshot,
+  PerformanceMetrics,
+  ChartDataPoint
 } from '@/types/api';
 import type { ClusterConnection, CreateClusterInput } from '@/types/app';
 import { getStoredValue, setStoredValue } from '@/utils/storage';
@@ -38,6 +42,9 @@ const ACTIVE_CLUSTER_KEY = 'eum/active-cluster';
 
 type MonitoringContextValue = {
   snapshot: MonitoringSnapshot | null;
+  prevSnapshot: MonitoringSnapshot | null;
+  performanceMetrics: PerformanceMetrics;
+  chartData: ChartDataPoint[];
   healthHistory: CatHealthRow[];
   loading: boolean;
   refreshing: boolean;
@@ -55,11 +62,6 @@ type MonitoringContextValue = {
   addCluster: (input: CreateClusterInput) => void;
   updateCluster: (clusterLabel: string, input: CreateClusterInput) => void;
   deleteCluster: (clusterLabel: string) => void;
-  flushCluster: () => Promise<void>;
-  disableShardAllocation: () => Promise<void>;
-  stopShardRebalance: () => Promise<void>;
-  enableShardAllocation: () => Promise<void>;
-  enableShardRebalance: () => Promise<void>;
 };
 
 const MonitoringContext = createContext<MonitoringContextValue | undefined>(undefined);
@@ -83,6 +85,13 @@ function mergeHealthHistory(
 
 export function MonitoringProvider({ children }: { children: ReactNode }) {
   const [snapshot, setSnapshot] = useState<MonitoringSnapshot | null>(null);
+  const [performanceMetrics, setPerformanceMetrics] = useState<PerformanceMetrics>({
+    indexingRate: 0,
+    searchRate: 0,
+    indexLatency: 0,
+    searchLatency: 0
+  });
+  const [chartData, setChartData] = useState<ChartDataPoint[]>([]);
   const [healthHistory, setHealthHistory] = useState<CatHealthRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
@@ -98,6 +107,16 @@ export function MonitoringProvider({ children }: { children: ReactNode }) {
     getStoredValue<string>(ACTIVE_CLUSTER_KEY, '')
   );
   const lastUpdatedRef = useRef<string | null>(null);
+  const performanceTrackerRef = useRef<PerformanceTracker>(new PerformanceTracker());
+  const prevSnapshotRef = useRef<MonitoringSnapshot | null>(null);
+  const snapshotRef = useRef<MonitoringSnapshot | null>(null);
+
+  // Keep snapshotRef in sync with snapshot state
+  useEffect(() => {
+    snapshotRef.current = snapshot;
+  }, [snapshot]);
+
+  // Cluster metrics are updated only in fetchAll via addSnapshot; no duplicate add on snapshot change
   const healthCheckDoneRef = useRef<boolean>(false);
   const autoRetryIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   
@@ -135,33 +154,53 @@ export function MonitoringProvider({ children }: { children: ReactNode }) {
       setConnectionFailed(false);
       
       const [
-        allocation,
-        recovery,
+        nodeStats,
+        indexStats,
+        indices,
         health,
         nodes,
-        settings,
+        allocation,
         catHealth
       ] = await Promise.all([
-        getAllocation(activeCluster),
-        getRecovery(activeCluster),
+        getNodeStats(activeCluster),
+        getIndexStats(activeCluster),
+        getIndices(activeCluster),
         getClusterHealth(activeCluster),
         getNodes(activeCluster),
-        getClusterSettings(activeCluster),
+        getAllocation(activeCluster),
         getCatHealth(activeCluster)
       ]);
-      
+
+      // Calculate performance metrics (cluster, node, or index specific)
+      const performanceMetrics = performanceTrackerRef.current.addSnapshot(nodeStats, null, indexStats, null);
+      const chartData = performanceTrackerRef.current.getChartData();
+
       const fetchedAt = new Date().toISOString();
       lastUpdatedRef.current = fetchedAt;
-      
-      setSnapshot({
-        allocation,
-        recovery,
+
+      // Create new snapshot
+      const newSnapshot: MonitoringSnapshot = {
+        nodeStats,
+        indexStats,
+        indices,
+        performanceMetrics,
         health,
         nodes,
-        settings,
+        allocation,
+        settings: { persistent: {}, transient: {} }, // Keep empty for now
         catHealth,
         fetchedAt
-      });
+      };
+
+      // Store previous snapshot from ref (always has latest value)
+      prevSnapshotRef.current = snapshotRef.current;
+
+      // Update both state and ref
+      snapshotRef.current = newSnapshot;
+      setSnapshot(newSnapshot);
+
+      setPerformanceMetrics(performanceMetrics);
+      setChartData(chartData);
       setHealthHistory((prev) => mergeHealthHistory(prev, catHealth));
       setConnectionFailed(false);
     } catch (err) {
@@ -334,7 +373,7 @@ export function MonitoringProvider({ children }: { children: ReactNode }) {
   
   // Polling
   useEffect(() => {
-    if (connectionFailed || !activeCluster) {
+    if (connectionFailed || !activeCluster || pollInterval === 0) {
       return;
     }
     
@@ -525,6 +564,9 @@ export function MonitoringProvider({ children }: { children: ReactNode }) {
     
     return {
       snapshot,
+      prevSnapshot: prevSnapshotRef.current,
+      performanceMetrics,
+      chartData,
       healthHistory,
       loading,
       refreshing,
@@ -535,7 +577,8 @@ export function MonitoringProvider({ children }: { children: ReactNode }) {
       retryConnection,
       pollInterval,
       setPollInterval: (ms: number) => {
-        const safeValue = Math.min(Math.max(ms, 3000), 60000);
+        // Allow OFF (0) value, otherwise enforce minimum 3000
+        const safeValue = ms === 0 ? 0 : Math.min(Math.max(ms, 3000), 60000);
         setPollIntervalState(safeValue);
         setStoredValue(POLL_STORAGE_KEY, safeValue);
       },
@@ -549,11 +592,6 @@ export function MonitoringProvider({ children }: { children: ReactNode }) {
       addCluster,
       updateCluster,
       deleteCluster,
-      flushCluster: handleFlushCluster,
-      disableShardAllocation: handleDisableShardAllocation,
-      stopShardRebalance: handleStopShardRebalance,
-      enableShardAllocation: handleEnableShardAllocation,
-      enableShardRebalance: handleEnableShardRebalance
     };
   }, [
     snapshot,

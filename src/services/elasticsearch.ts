@@ -4,7 +4,11 @@ import type {
   CatHealthRow,
   ClusterHealth,
   ClusterSettings,
+  IndexInfo,
+  IndexStats,
   NodeInfo,
+  NodeStats,
+  PerformanceMetrics,
   RecoveryRow
 } from '@/types/api';
 import type { ClusterConnection } from '@/types/app';
@@ -295,6 +299,63 @@ export async function enableShardRebalance(cluster: ClusterConnection): Promise<
       'cluster.routing.rebalance.enable': 'all'
     }
   });
+}
+
+// Performance monitoring functions
+export async function getNodeStats(cluster: ClusterConnection): Promise<NodeStats> {
+  // In Elasticsearch 8.x, both indexing and search stats come from indices endpoint
+  return request<NodeStats>('nodeStats', cluster);
+}
+
+export async function getIndices(cluster: ClusterConnection): Promise<IndexInfo[]> {
+  const data = await request<
+    Array<{
+      index: string;
+      pri: string;
+      rep: string;
+      'pri.store.size': string;
+      'store.size': string;
+      'docs.count': string;
+    }>
+  >('indices', cluster);
+
+  return data.map((row) => ({
+    index: row.index,
+    pri: row.pri,
+    rep: row.rep,
+    'pri.store.size': row['pri.store.size'],
+    'store.size': row['store.size'],
+    'docs.count': row['docs.count']
+  }));
+}
+
+export async function getIndexStats(cluster: ClusterConnection): Promise<IndexStats> {
+  return request<IndexStats>('indexStats', cluster);
+}
+
+/**
+ * Calculate performance metrics from node stats
+ */
+export function calculatePerformanceMetrics(nodeStats: NodeStats): PerformanceMetrics {
+  let totalIndexingOps = 0;
+  let totalIndexTimeMs = 0;
+  let totalSearchOps = 0;
+  let totalSearchTimeMs = 0;
+
+  // Aggregate stats from all nodes
+  Object.values(nodeStats.nodes).forEach((node) => {
+    totalIndexingOps += node.indices.indexing.index_total;
+    totalIndexTimeMs += node.indices.indexing.index_time_in_millis;
+    totalSearchOps += node.indices.search.query_total;
+    totalSearchTimeMs += node.indices.search.query_time_in_millis;
+  });
+
+  return {
+    indexingRate: 0, // Will be calculated by tracker based on history
+    searchRate: 0,   // Will be calculated by tracker based on history
+    indexLatency: totalIndexingOps > 0 ? totalIndexTimeMs / totalIndexingOps : 0,
+    searchLatency: totalSearchOps > 0 ? totalSearchTimeMs / totalSearchOps : 0
+  };
 }
 
 export async function updateRecoverySetting(

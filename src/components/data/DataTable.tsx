@@ -15,6 +15,12 @@ type Column<T> = {
   sortFn?: (a: T, b: T) => number;
 };
 
+type ControlledSort = {
+  sortColumn: string | null;
+  sortDirection: SortDirection;
+  onSortChange: (column: string | null, direction: SortDirection) => void;
+};
+
 type DataTableProps<T> = {
   data: T[];
   columns: Column<T>[];
@@ -22,6 +28,10 @@ type DataTableProps<T> = {
   dense?: boolean;
   noHorizontalScroll?: boolean;
   tableId?: string;
+  defaultSortColumn?: string;
+  defaultSortDirection?: SortDirection;
+  /** When set, parent controls sort; data is not sorted inside DataTable (e.g. for server-side or full-dataset sort) */
+  controlledSort?: ControlledSort;
 };
 
 export function DataTable<T extends object>({
@@ -30,22 +40,28 @@ export function DataTable<T extends object>({
   emptyMessage = 'No records found',
   dense,
   noHorizontalScroll = false,
-  tableId
+  tableId,
+  defaultSortColumn,
+  defaultSortDirection = null,
+  controlledSort
 }: DataTableProps<T>) {
   const getInitialSortState = (): { column: string | null; direction: SortDirection } => {
-    if (!tableId) return { column: null, direction: null };
-    
-    try {
-      const stored = localStorage.getItem(`datatable-sort-${tableId}`);
-      if (stored) {
-        const parsed = JSON.parse(stored);
-        return {
-          column: parsed.column || null,
-          direction: parsed.direction || null
-        };
+    if (tableId) {
+      try {
+        const stored = localStorage.getItem(`datatable-sort-${tableId}`);
+        if (stored) {
+          const parsed = JSON.parse(stored);
+          return {
+            column: parsed.column || null,
+            direction: parsed.direction || null
+          };
+        }
+      } catch {
+        // Ignore parse errors
       }
-    } catch {
-      // Ignore parse errors
+    }
+    if (defaultSortColumn && defaultSortDirection) {
+      return { column: defaultSortColumn, direction: defaultSortDirection };
     }
     return { column: null, direction: null };
   };
@@ -54,18 +70,24 @@ export function DataTable<T extends object>({
   const [sortColumn, setSortColumn] = useState<string | null>(initialSort.column);
   const [sortDirection, setSortDirection] = useState<SortDirection>(initialSort.direction);
 
+  const effectiveSortColumn = controlledSort ? controlledSort.sortColumn : sortColumn;
+  const effectiveSortDirection = controlledSort ? controlledSort.sortDirection : sortDirection;
+
   const handleSort = (columnKey: string) => {
     const column = columns.find((col) => col.key === columnKey);
     if (!column || column.sortable === false) return;
 
+    const currentColumn = controlledSort ? controlledSort.sortColumn : sortColumn;
+    const currentDirection = controlledSort ? controlledSort.sortDirection : sortDirection;
+
     let newColumn: string | null;
     let newDirection: SortDirection;
 
-    if (sortColumn === columnKey) {
-      if (sortDirection === 'asc') {
+    if (currentColumn === columnKey) {
+      if (currentDirection === 'asc') {
         newDirection = 'desc';
         newColumn = columnKey;
-      } else if (sortDirection === 'desc') {
+      } else if (currentDirection === 'desc') {
         newDirection = null;
         newColumn = null;
       } else {
@@ -74,28 +96,34 @@ export function DataTable<T extends object>({
       }
     } else {
       newColumn = columnKey;
-      newDirection = 'asc';
+      // Start with desc (descending) for rate columns on first click
+      const isRateColumn = columnKey.toLowerCase().includes('rate') || 
+                          columnKey.toLowerCase().includes('latency') ||
+                          columnKey === 'docCountNum' ||
+                          columnKey === 'totalSizeBytes';
+      newDirection = isRateColumn ? 'desc' : 'asc';
     }
 
-    setSortColumn(newColumn);
-    setSortDirection(newDirection);
-
-    if (tableId) {
-      try {
-        localStorage.setItem(
-          `datatable-sort-${tableId}`,
-          JSON.stringify({
-            column: newColumn,
-            direction: newDirection
-          })
-        );
-      } catch {
-        // Ignore localStorage errors
+    if (controlledSort) {
+      controlledSort.onSortChange(newColumn, newDirection);
+    } else {
+      setSortColumn(newColumn);
+      setSortDirection(newDirection);
+      if (tableId) {
+        try {
+          localStorage.setItem(
+            `datatable-sort-${tableId}`,
+            JSON.stringify({ column: newColumn, direction: newDirection })
+          );
+        } catch {
+          // Ignore
+        }
       }
     }
   };
 
   const sortedData = useMemo(() => {
+    if (controlledSort) return data;
     if (!sortColumn || !sortDirection) return data;
 
     const column = columns.find((col) => col.key === sortColumn);
@@ -126,16 +154,16 @@ export function DataTable<T extends object>({
         return aStr > bStr ? -1 : aStr < bStr ? 1 : 0;
       }
     });
-  }, [data, sortColumn, sortDirection, columns]);
+  }, [data, sortColumn, sortDirection, columns, controlledSort]);
 
   const getSortIcon = (columnKey: string) => {
-    if (sortColumn !== columnKey) {
+    if (effectiveSortColumn !== columnKey) {
       return <ArrowUpDown className="h-3 w-3 opacity-40" />;
     }
-    if (sortDirection === 'asc') {
+    if (effectiveSortDirection === 'asc') {
       return <ArrowUp className="h-3 w-3" />;
     }
-    if (sortDirection === 'desc') {
+    if (effectiveSortDirection === 'desc') {
       return <ArrowDown className="h-3 w-3" />;
     }
     return <ArrowUpDown className="h-3 w-3 opacity-40" />;
@@ -149,7 +177,7 @@ export function DataTable<T extends object>({
             <tr className="border-b-2 border-gray-300 bg-gray-100 dark:border-gray-600 dark:bg-gray-800">
               {columns.map((column) => {
                 const isSortable = column.sortable !== false;
-                const isSorted = sortColumn === column.key;
+                const isSorted = effectiveSortColumn === column.key;
                 
                 return (
                   <th

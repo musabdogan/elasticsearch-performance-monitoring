@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "Elasticsearch Upgrade Monitoring",
-  "version": "1.0.1",
-  "description": "Real-time monitoring dashboard for Elasticsearch cluster upgrades. Track node versions, shard recovery, allocation status.",
+  "name": "Elasticsearch Performance Monitoring",
+  "version": "1.0.0",
+  "description": "Real-time performance monitoring dashboard for Elasticsearch clusters. Track indexing/search rates, latencies, and index statistics.",
   "permissions": [
     "storage"
   ],

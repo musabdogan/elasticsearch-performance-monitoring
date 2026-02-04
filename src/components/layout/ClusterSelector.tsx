@@ -1,4 +1,4 @@
-import { ChevronDown, Edit2, Plus, Server, Trash2, Check, Eye, EyeOff } from 'lucide-react';
+import { ChevronDown, Edit2, Plus, Server, Trash2, Check, Eye, EyeOff, Copy } from 'lucide-react';
 import { useState, useRef, useEffect } from 'react';
 import { useMonitoring } from '@/context/MonitoringProvider';
 import type { ClusterConnection, CreateClusterInput } from '@/types/app';
@@ -25,6 +25,7 @@ export function ClusterSelector() {
   const [formError, setFormError] = useState<string | null>(null);
   const [showPassword, setShowPassword] = useState(false);
   const [isAddingNew, setIsAddingNew] = useState(false);
+  const [copiedCluster, setCopiedCluster] = useState<string | null>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
   const handleClose = () => {
@@ -34,6 +35,20 @@ export function ClusterSelector() {
     setForm(initialForm);
     setFormError(null);
     setShowPassword(false);
+    setCopiedCluster(null);
+  };
+
+  const handleCopyUrl = async (cluster: ClusterConnection) => {
+    try {
+      await navigator.clipboard.writeText(cluster.baseUrl);
+      setCopiedCluster(cluster.label);
+      // Hide check after 2 seconds
+      setTimeout(() => {
+        setCopiedCluster(null);
+      }, 2000);
+    } catch (err) {
+      console.error('Failed to copy URL:', err);
+    }
   };
 
   const handleEdit = (cluster: ClusterConnection) => {
@@ -187,20 +202,29 @@ export function ClusterSelector() {
                                 <div className="font-medium text-sm text-gray-900 dark:text-gray-100 truncate">
                                   {cluster.label}
                                 </div>
-                                <div className="text-xs text-gray-500 dark:text-gray-400 truncate">
-                                  {cluster.baseUrl}
-                                </div>
-                                {(cluster.username || cluster.password) && (
-                                  <div className="text-xs text-gray-400 dark:text-gray-500 truncate mt-0.5">
-                                    {cluster.username && `User: ${cluster.username}`}
-                                    {cluster.username && cluster.password && ' • '}
-                                    {cluster.password && `Pass: ${'•'.repeat(Math.min(cluster.password.length, 8))}`}
-                                  </div>
-                                )}
                               </div>
                             </div>
                           </button>
                           <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleCopyUrl(cluster);
+                              }}
+                              className={`rounded-md p-1.5 transition-colors ${
+                                copiedCluster === cluster.label
+                                  ? 'text-green-600 hover:text-green-700 dark:text-green-400 dark:hover:text-green-300'
+                                  : 'text-gray-400 hover:bg-gray-200 hover:text-gray-600 dark:hover:bg-gray-600 dark:hover:text-gray-300'
+                              }`}
+                              title={copiedCluster === cluster.label ? "Copied!" : "Copy URL"}
+                            >
+                              {copiedCluster === cluster.label ? (
+                                <Check className="h-3.5 w-3.5" />
+                              ) : (
+                                <Copy className="h-3.5 w-3.5" />
+                              )}
+                            </button>
                             <button
                               type="button"
                               onClick={(e) => {

@@ -1,6 +1,6 @@
-# Elasticsearch Upgrade Monitoring - Chrome Extension
+# Elasticsearch Performance Monitoring - Chrome Extension
 
-Real-time monitoring dashboard for Elasticsearch cluster upgrades. Track node versions, shard recovery status, disk allocation, cluster health, and get upgrade order recommendations.
+Real-time performance monitoring dashboard for Elasticsearch clusters. Track indexing/search rates, latencies, index statistics, and cluster performance metrics with interactive charts.
 
 ## 🚀 Install from Chrome Web Store
 
@@ -8,15 +8,16 @@ Real-time monitoring dashboard for Elasticsearch cluster upgrades. Track node ve
 
 ## Features
 
-- **Real-time Monitoring**: Live polling of cluster status, node versions, shard recovery, and allocation
+- **Real-time Performance Monitoring**: Live tracking of indexing/search rates and latencies
+- **Interactive Charts**: Visual performance trends with sparkline charts
+- **Index Statistics**: Comprehensive index information (shards, size, document count)
 - **Multi-Cluster Support**: Manage multiple Elasticsearch clusters with easy switching
-- **Upgrade Order Calculation**: Automatic calculation of node upgrade order based on Elasticsearch best practices
-- **Shard Recovery Tracking**: Monitor active shard recovery operations with detailed progress
-- **Cluster Health Dashboard**: Visual indicators for cluster status (GREEN/YELLOW/RED)
-- **Ready-to-Use Commands**: Quick access to common cluster management operations
-  - Flush cluster
-  - Disable/Enable shard allocation
-  - Disable/Enable shard rebalance
+- **Cluster Overview**: Cluster health and node information
+- **Performance Metrics**:
+  - Indexing Rate (ops/sec)
+  - Search Rate (ops/sec)
+  - Index Latency (ms/op)
+  - Search Latency (ms/op)
 - **Dark/Light Mode**: Toggle between light and dark themes
 - **Direct Connection**: Connects directly to Elasticsearch clusters (no proxy needed)
 
@@ -78,7 +79,7 @@ node scripts/create-png-icons.js
 ## Project Structure
 
 ```
-elasticsearch-upgrade-monitoring/
+elasticsearch-performance-monitoring/
 ├── dist/                  # Built extension (load this in Chrome)
 ├── public/
 │   ├── manifest.json      # Chrome extension manifest
@@ -88,6 +89,10 @@ elasticsearch-upgrade-monitoring/
 │   ├── App.tsx           # Main dashboard component
 │   ├── main.tsx          # Entry point
 │   ├── components/       # UI components
+│   │   ├── charts/       # Performance chart components
+│   │   ├── data/         # Data table components
+│   │   ├── layout/       # Layout components
+│   │   └── feedback/     # Error/success components
 │   ├── context/          # React context providers
 │   ├── services/         # Elasticsearch API service
 │   ├── types/            # TypeScript types
@@ -101,8 +106,20 @@ elasticsearch-upgrade-monitoring/
 - **React 18** + TypeScript
 - **Vite** (build tool)
 - **Tailwind CSS** (styling)
+- **Recharts** (data visualization)
 - **Lucide React** (icons)
 - **Chrome Storage API** (data persistence)
+
+## Performance Metrics
+
+The extension tracks these key Elasticsearch performance indicators:
+
+- **Indexing Rate**: Operations per second for index requests
+- **Search Rate**: Operations per second for search requests
+- **Index Latency**: Average time per indexing operation (ms)
+- **Search Latency**: Average time per search operation (ms)
+
+All metrics are calculated using real-time data from Elasticsearch's `_nodes/stats` API and displayed with interactive charts showing trends over the last 10 minutes.
 
 ## Permissions
 
