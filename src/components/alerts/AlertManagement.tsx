@@ -2,7 +2,6 @@ import { memo, useState, useEffect } from 'react';
 import { 
   X, 
   Settings, 
-  History, 
   Shield, 
   BarChart3,
   RotateCcw,
@@ -40,7 +39,7 @@ interface AlertManagementProps {
   isPanel?: boolean; // New prop for panel mode
 }
 
-type TabType = 'alerts' | 'settings' | 'rules' | 'history' | 'stats';
+type TabType = 'alerts' | 'settings' | 'rules' | 'stats';
 
 const AlertManagement = memo<AlertManagementProps>(({
   isOpen,
@@ -87,7 +86,6 @@ const AlertManagement = memo<AlertManagementProps>(({
     { id: 'alerts' as TabType, label: 'Active Alerts', icon: Bell },
     { id: 'settings' as TabType, label: 'Settings', icon: Settings },
     { id: 'rules' as TabType, label: 'Rules', icon: Shield },
-    { id: 'history' as TabType, label: 'History', icon: History },
     { id: 'stats' as TabType, label: 'Statistics', icon: BarChart3 }
   ];
 
@@ -133,14 +131,51 @@ const AlertManagement = memo<AlertManagementProps>(({
 
             <div className={spacingClass}>
               {alerts.length === 0 ? (
-                <div className="text-center py-12">
-                  <div className="w-16 h-16 bg-green-100 dark:bg-green-900/30 rounded-full flex items-center justify-center mx-auto mb-4">
-                    <Check className="h-8 w-8 text-green-600 dark:text-green-400" />
+                <div>
+                  <div className="text-center py-12">
+                    <div className="w-16 h-16 bg-green-100 dark:bg-green-900/30 rounded-full flex items-center justify-center mx-auto mb-4">
+                      <Check className="h-8 w-8 text-green-600 dark:text-green-400" />
+                    </div>
+                    <h4 className="font-medium text-gray-900 dark:text-gray-100 mb-2">All Clear!</h4>
+                    <p className={`${isPanel ? 'text-xs' : 'text-sm'} text-gray-500 dark:text-gray-400`}>
+                      No active alerts at the moment. Your Elasticsearch cluster is running smoothly.
+                    </p>
                   </div>
-                  <h4 className="font-medium text-gray-900 dark:text-gray-100 mb-2">All Clear!</h4>
-                  <p className={`${isPanel ? 'text-xs' : 'text-sm'} text-gray-500 dark:text-gray-400`}>
-                    No active alerts at the moment. Your Elasticsearch cluster is running smoothly.
-                  </p>
+                  
+                  {/* Show history if available */}
+                  {history.length > 0 && (
+                    <div className="border-t border-gray-200 dark:border-gray-700 pt-6">
+                      <div className="flex items-center justify-between mb-4">
+                        <div>
+                          <h4 className={`${textSizeClass} font-medium text-gray-900 dark:text-gray-100`}>
+                            Alert History ({history.length})
+                          </h4>
+                          {clusterName && (
+                            <p className={`${isPanel ? 'text-xs' : 'text-sm'} text-gray-500 dark:text-gray-400`}>
+                              Cluster: {clusterName}
+                            </p>
+                          )}
+                        </div>
+                        <button
+                          onClick={onClearHistory}
+                          className={`flex items-center gap-2 px-3 py-1.5 ${isPanel ? 'text-xs' : 'text-sm'} border border-red-300 dark:border-red-600 text-red-700 dark:text-red-400 rounded-lg hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors`}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                          Clear History
+                        </button>
+                      </div>
+                      
+                      <div className="space-y-3">
+                        {history.slice(0, 50).map(alert => (
+                          <AlertItem
+                            key={alert.id}
+                            alert={alert}
+                            compact={true}
+                          />
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
               ) : (
                 alerts.map(alert => (
@@ -294,55 +329,6 @@ const AlertManagement = memo<AlertManagementProps>(({
                 <RotateCcw className="h-4 w-4" />
                 Reset to Defaults
               </button>
-            </div>
-          </div>
-        );
-      
-      case 'history':
-        return (
-          <div className={`${paddingClass} ${spacingClass} overflow-y-auto h-full`}>
-            <div className="flex items-center justify-between">
-              <div>
-                <h3 className={`${textSizeClass} font-medium text-gray-900 dark:text-gray-100`}>
-                  Alert History ({history.length})
-                </h3>
-                {clusterName && (
-                  <p className={`${isPanel ? 'text-xs' : 'text-sm'} text-gray-500 dark:text-gray-400`}>
-                    Cluster: {clusterName}
-                  </p>
-                )}
-              </div>
-              {history.length > 0 && onClearHistory && (
-                <button
-                  onClick={onClearHistory}
-                  className={`flex items-center gap-2 px-3 py-1.5 ${isPanel ? 'text-xs' : 'text-sm'} text-red-600 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-900/20 rounded-lg transition-colors border border-red-200 dark:border-red-800`}
-                >
-                  <Trash2 className="h-4 w-4" />
-                  Clear History
-                </button>
-              )}
-            </div>
-
-            <div className={spacingClass}>
-              {history.length === 0 ? (
-                <div className="text-center py-12">
-                  <div className="w-16 h-16 bg-gray-100 dark:bg-gray-700 rounded-full flex items-center justify-center mx-auto mb-4">
-                    <History className="h-8 w-8 text-gray-400" />
-                  </div>
-                  <h4 className="font-medium text-gray-900 dark:text-gray-100 mb-2">No Alert History</h4>
-                  <p className={`${isPanel ? 'text-xs' : 'text-sm'} text-gray-500 dark:text-gray-400`}>
-                    Alert history will appear here once alerts are triggered
-                  </p>
-                </div>
-              ) : (
-                history.slice(0, 50).map(alert => (
-                  <AlertItem 
-                    key={alert.id} 
-                    alert={alert} 
-                    compact={isPanel} 
-                  />
-                ))
-              )}
             </div>
           </div>
         );
