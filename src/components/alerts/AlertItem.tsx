@@ -81,6 +81,22 @@ const AlertItem = memo<AlertItemProps>(({
     });
   };
 
+  const formatDuration = (firstTriggeredAt: string) => {
+    const startDate = new Date(firstTriggeredAt);
+    const now = new Date();
+    const diffMs = now.getTime() - startDate.getTime();
+    const diffMins = Math.floor(diffMs / (1000 * 60));
+    
+    if (diffMins < 1) return 'active for <1 minute';
+    if (diffMins < 60) return `active for ${diffMins} minute${diffMins > 1 ? 's' : ''}`;
+    if (diffMins < 1440) {
+      const hours = Math.floor(diffMins / 60);
+      return `active for ${hours} hour${hours > 1 ? 's' : ''}`;
+    }
+    const days = Math.floor(diffMins / 1440);
+    return `active for ${days} day${days > 1 ? 's' : ''}`;
+  };
+
   const formatValue = (value: number | string, unit: string) => {
     if (typeof value === 'string') return value;
     
@@ -113,9 +129,25 @@ const AlertItem = memo<AlertItemProps>(({
           <p className={`text-sm font-medium ${colors.text} truncate`}>
             {alert.ruleName}
           </p>
-          <p className={`text-xs ${colors.textSecondary} truncate`}>
-            {formatValue(alert.currentValue, alert.unit)}
-          </p>
+          <div className="flex items-center gap-2">
+            <p className={`text-xs ${colors.textSecondary} truncate`}>
+              {formatValue(alert.currentValue, alert.unit)}
+            </p>
+            <div className="flex items-center gap-2 text-xs">
+              {alert.count && alert.count > 1 && (
+                <span className={`${colors.textSecondary} font-medium`}>
+                  x{alert.count}
+                </span>
+              )}
+              <span className={`${colors.textSecondary} flex items-center gap-1`}>
+                <Clock className="h-3 w-3" />
+                {alert.firstTriggeredAt && alert.status === 'active' 
+                  ? formatDuration(alert.firstTriggeredAt)
+                  : formatTimestamp(alert.triggeredAt)
+                }
+              </span>
+            </div>
+          </div>
         </div>
         <div className="flex items-center gap-1">
           {onAcknowledge && (
@@ -158,8 +190,17 @@ const AlertItem = memo<AlertItemProps>(({
                 {getCategoryIcon()}
                 <span className="text-xs capitalize">{alert.category}</span>
               </div>
-              <span className={`text-xs ${colors.textSecondary}`}>
-                {formatTimestamp(alert.triggeredAt)}
+              {alert.count && alert.count > 1 && (
+                <span className={`text-xs ${colors.textSecondary} font-medium`}>
+                  x{alert.count}
+                </span>
+              )}
+              <span className={`text-xs ${colors.textSecondary} flex items-center gap-1`}>
+                <Clock className="h-3 w-3" />
+                {alert.firstTriggeredAt && alert.status === 'active' 
+                  ? formatDuration(alert.firstTriggeredAt)
+                  : formatTimestamp(alert.triggeredAt)
+                }
               </span>
             </div>
           </div>

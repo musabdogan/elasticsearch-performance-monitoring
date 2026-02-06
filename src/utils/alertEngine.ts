@@ -177,6 +177,8 @@ export class AlertEngine {
       threshold: rule.threshold,
       unit: rule.unit,
       triggeredAt: now,
+      firstTriggeredAt: now,
+      count: 1,
       category: rule.category,
       clusterName
     };
@@ -222,6 +224,7 @@ export class AlertEngine {
               existingAlert.resolvedAt = undefined;
               existingAlert.acknowledgedAt = undefined;
               existingAlert.triggeredAt = new Date().toISOString();
+              existingAlert.count = (existingAlert.count || 1) + 1; // Increment count
               newAlerts.push(existingAlert);
               
               // Send browser notification for critical alerts

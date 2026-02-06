@@ -28,6 +28,8 @@ export interface AlertInstance {
   threshold: number | string;
   unit: string;
   triggeredAt: string;
+  firstTriggeredAt?: string; // When this alert was first triggered (for duration calculation)
+  count?: number; // How many times this alert has been triggered
   acknowledgedAt?: string;
   resolvedAt?: string;
   snoozedUntil?: string;
