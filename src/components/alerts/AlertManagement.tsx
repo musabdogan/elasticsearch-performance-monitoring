@@ -25,7 +25,6 @@ interface AlertManagementProps {
   clusterName?: string;
   onUpdateSettings?: (updates: Partial<AlertSettings>) => void;
   onResetToDefaults?: () => void;
-  onAcknowledge?: (alertId: string) => void;
   onSnooze?: (alertId: string, minutes: number) => void;
   onDismiss?: (alertId: string) => void;
   onClearHistory?: () => void;
@@ -43,7 +42,6 @@ const AlertManagement = memo<AlertManagementProps>(({
   clusterName,
   onUpdateSettings,
   onResetToDefaults,
-  onAcknowledge,
   onSnooze,
   onDismiss,
   onClearHistory,
@@ -112,13 +110,6 @@ const AlertManagement = memo<AlertManagementProps>(({
               {filteredAlerts.length > 0 && (
                 <div className="flex items-center gap-2">
                   <button
-                    onClick={() => filteredAlerts.forEach(alert => onAcknowledge?.(alert.id))}
-                    className={`flex items-center gap-2 px-3 py-1.5 ${isPanel ? 'text-xs' : 'text-sm'} bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors`}
-                  >
-                    <Check className="h-4 w-4" />
-                    Acknowledge All
-                  </button>
-                  <button
                     onClick={() => filteredAlerts.forEach(alert => onDismiss?.(alert.id))}
                     className={`flex items-center gap-2 px-3 py-1.5 ${isPanel ? 'text-xs' : 'text-sm'} border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors`}
                   >
@@ -182,7 +173,6 @@ const AlertManagement = memo<AlertManagementProps>(({
                   <AlertItem
                     key={alert.id}
                     alert={alert}
-                    onAcknowledge={onAcknowledge}
                     onSnooze={onSnooze}
                     onDismiss={onDismiss}
                     compact={isPanel}
@@ -268,28 +258,6 @@ const AlertManagement = memo<AlertManagementProps>(({
                   <span
                     className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
                       tempSettings.soundAlerts ? 'translate-x-6' : 'translate-x-1'
-                    }`}
-                  />
-                </button>
-              </div>
-
-              {/* Auto Acknowledge */}
-              <div className="flex items-center justify-between p-4 bg-gray-50 dark:bg-gray-700 rounded-lg">
-                <div>
-                  <h4 className="font-medium text-gray-900 dark:text-gray-100">Auto Acknowledge Resolved</h4>
-                  <p className={`${isPanel ? 'text-xs' : 'text-sm'} text-gray-500 dark:text-gray-400`}>
-                    Automatically acknowledge alerts when they are resolved
-                  </p>
-                </div>
-                <button
-                  onClick={() => setTempSettings(prev => ({ ...prev, autoAcknowledgeResolved: !prev.autoAcknowledgeResolved }))}
-                  className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
-                    tempSettings.autoAcknowledgeResolved ? 'bg-blue-600' : 'bg-gray-300 dark:bg-gray-600'
-                  }`}
-                >
-                  <span
-                    className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
-                      tempSettings.autoAcknowledgeResolved ? 'translate-x-6' : 'translate-x-1'
                     }`}
                   />
                 </button>

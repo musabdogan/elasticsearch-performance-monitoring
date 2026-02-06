@@ -122,7 +122,6 @@ export default function App() {
     // Alert system
     alerts,
     alertSettings,
-    acknowledgeAlert,
     snoozeAlert,
     dismissAlert,
     updateAlertSettings,
@@ -494,7 +493,6 @@ export default function App() {
               clusterName={activeCluster?.label}
               onUpdateSettings={updateAlertSettings}
               onResetToDefaults={resetAlertsToDefaults}
-              onAcknowledge={acknowledgeAlert}
               onSnooze={snoozeAlert}
               onDismiss={dismissAlert}
               onClearHistory={clearAlertHistory}

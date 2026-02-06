@@ -194,7 +194,6 @@ export const DEFAULT_ALERT_SETTINGS: AlertSettings = {
   enabled: true,
   browserNotifications: true,
   soundAlerts: false,
-  autoAcknowledgeResolved: true,
   maxHistoryDays: 30
 };
 

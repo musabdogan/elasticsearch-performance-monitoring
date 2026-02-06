@@ -1,6 +1,6 @@
 export type AlertSeverity = 'info' | 'warning' | 'critical';
 export type AlertCondition = 'greater_than' | 'less_than' | 'equals' | 'not_equals';
-export type AlertStatus = 'active' | 'acknowledged' | 'resolved' | 'snoozed';
+export type AlertStatus = 'active' | 'resolved' | 'snoozed';
 
 export interface AlertRule {
   id: string;
@@ -30,7 +30,6 @@ export interface AlertInstance {
   triggeredAt: string;
   firstTriggeredAt?: string; // When this alert was first triggered (for duration calculation)
   count?: number; // How many times this alert has been triggered
-  acknowledgedAt?: string;
   resolvedAt?: string;
   snoozedUntil?: string;
   category: string;
@@ -42,7 +41,6 @@ export interface AlertInstance {
 export interface AlertStats {
   total: number;
   active: number;
-  acknowledged: number;
   resolved: number;
   snoozed: number;
   bySeverity: {
@@ -62,7 +60,6 @@ export interface AlertSettings {
   enabled: boolean;
   browserNotifications: boolean;
   soundAlerts: boolean;
-  autoAcknowledgeResolved: boolean;
   maxHistoryDays: number;
 }
 

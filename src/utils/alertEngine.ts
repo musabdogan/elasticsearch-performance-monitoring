@@ -218,11 +218,10 @@ export class AlertEngine {
           if (currentValue !== null) {
             existingAlert.currentValue = currentValue;
             
-            // If alert was resolved/acknowledged, reactivate it
+            // If alert was resolved, reactivate it
             if (existingAlert.status !== 'active') {
               existingAlert.status = 'active';
               existingAlert.resolvedAt = undefined;
-              existingAlert.acknowledgedAt = undefined;
               existingAlert.triggeredAt = new Date().toISOString();
               existingAlert.count = (existingAlert.count || 1) + 1; // Increment count
               newAlerts.push(existingAlert);
@@ -289,12 +288,6 @@ export class AlertEngine {
         if (activeAlert && activeAlert.status === 'active') {
           activeAlert.status = 'resolved';
           activeAlert.resolvedAt = new Date().toISOString();
-          
-          // Auto-acknowledge if setting is enabled
-          if (this.settings.autoAcknowledgeResolved) {
-            activeAlert.status = 'acknowledged';
-            activeAlert.acknowledgedAt = activeAlert.resolvedAt;
-          }
         }
       }
     }
@@ -347,7 +340,6 @@ export class AlertEngine {
     return {
       total: allAlerts.length,
       active: activeAlerts.length,
-      acknowledged: allAlerts.filter(a => a.status === 'acknowledged').length,
       resolved: allAlerts.filter(a => a.status === 'resolved').length,
       snoozed: allAlerts.filter(a => a.status === 'snoozed').length,
       bySeverity: {
@@ -364,15 +356,6 @@ export class AlertEngine {
     };
   }
 
-  // Acknowledge alert
-  public acknowledgeAlert(alertId: string): void {
-    const alert = this.activeAlerts.get(alertId);
-    if (alert && alert.status === 'active') {
-      alert.status = 'acknowledged';
-      alert.acknowledgedAt = new Date().toISOString();
-      this.saveToStorage();
-    }
-  }
 
   // Snooze alert
   public snoozeAlert(alertId: string, minutes: number): void {

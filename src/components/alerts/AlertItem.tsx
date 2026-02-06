@@ -4,7 +4,6 @@ import {
   AlertCircle, 
   Info, 
   X, 
-  Check, 
   Clock,
   Server,
   Zap,
@@ -16,7 +15,6 @@ import { ALERT_COLORS, ALERT_CATEGORY_ICONS } from '../../config/alerts';
 
 interface AlertItemProps {
   alert: AlertInstance;
-  onAcknowledge?: (alertId: string) => void;
   onSnooze?: (alertId: string, minutes: number) => void;
   onDismiss?: (alertId: string) => void;
   compact?: boolean;
@@ -24,7 +22,6 @@ interface AlertItemProps {
 
 const AlertItem = memo<AlertItemProps>(({ 
   alert, 
-  onAcknowledge, 
   onSnooze, 
   onDismiss, 
   compact = false 
@@ -150,15 +147,6 @@ const AlertItem = memo<AlertItemProps>(({
           </div>
         </div>
         <div className="flex items-center gap-1">
-          {onAcknowledge && (
-            <button
-              onClick={() => onAcknowledge(alert.id)}
-              className={`p-1 rounded hover:bg-white/20 ${colors.icon} transition-colors`}
-              title="Acknowledge"
-            >
-              <Check className="h-3 w-3" />
-            </button>
-          )}
           {onDismiss && (
             <button
               onClick={() => onDismiss(alert.id)}
@@ -215,15 +203,6 @@ const AlertItem = memo<AlertItemProps>(({
               title="Snooze for 30 minutes"
             >
               <Clock className="h-3.5 w-3.5" />
-            </button>
-          )}
-          {onAcknowledge && (
-            <button
-              onClick={() => onAcknowledge(alert.id)}
-              className={`p-1.5 rounded-md hover:bg-white/20 ${colors.icon} transition-colors`}
-              title="Acknowledge"
-            >
-              <Check className="h-3.5 w-3.5" />
             </button>
           )}
           {onDismiss && (

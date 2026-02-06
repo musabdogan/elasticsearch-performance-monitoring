@@ -69,7 +69,6 @@ type MonitoringContextValue = {
   updateCluster: (clusterLabel: string, input: CreateClusterInput) => void;
   deleteCluster: (clusterLabel: string) => void;
   // Alert management
-  acknowledgeAlert: (alertId: string) => void;
   snoozeAlert: (alertId: string, minutes: number) => void;
   dismissAlert: (alertId: string) => void;
   updateAlertRule: (ruleId: string, updates: Partial<AlertRule>) => void;
@@ -722,11 +721,6 @@ export function MonitoringProvider({ children }: { children: ReactNode }) {
       alertStats,
       alertRules,
       alertSettings,
-      acknowledgeAlert: (alertId: string) => {
-        alertEngine.acknowledgeAlert(alertId);
-        setAlerts(alertEngine.getActiveAlerts());
-        setAlertStats(alertEngine.getAlertStats());
-      },
       snoozeAlert: (alertId: string, minutes: number) => {
         alertEngine.snoozeAlert(alertId, minutes);
         setAlerts(alertEngine.getActiveAlerts());

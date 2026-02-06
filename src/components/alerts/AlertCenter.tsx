@@ -254,7 +254,6 @@ const AlertCenter = memo<AlertCenterProps>(({
                 <AlertItem
                   key={alert.id}
                   alert={alert}
-                  onAcknowledge={onAcknowledge}
                   onSnooze={onSnooze}
                   onDismiss={onDismiss}
                 />
