@@ -5,6 +5,7 @@ import MetricCard from '@/components/charts/MetricCard';
 import IndexTable from '@/components/data/IndexTable';
 import NodeTable from '@/components/data/NodeTable';
 import { InfoPopup } from '@/components/ui/InfoPopup';
+import AlertManagement from '@/components/alerts/AlertManagement';
 import { useMonitoring } from '@/context/MonitoringProvider';
 import { useMemo, useState } from 'react';
 import { Activity, Zap, Clock, TrendingUp, Cpu, Database, HardDrive, BarChart3 } from 'lucide-react';
@@ -117,8 +118,57 @@ export default function App() {
     refresh,
     retryConnection,
     activeCluster,
-    clusters
+    clusters,
+    // Alert system
+    alerts,
+    alertStats,
+    alertRules,
+    alertSettings,
+    acknowledgeAlert,
+    snoozeAlert,
+    dismissAlert,
+    updateAlertRule,
+    updateAlertSettings,
+    resetAlertsToDefaults,
+    getAlertHistory,
+    clearAlertHistory
   } = useMonitoring();
+
+  const [showAlertManagement, setShowAlertManagement] = useState(false);
+
+  // Alert indicators for resource cards
+  const getResourceAlertLevel = (metricType: 'cpu' | 'jvm' | 'storage') => {
+    const cpuAlerts = alerts.filter(a => a.ruleId.includes('cpu') && a.status === 'active');
+    const jvmAlerts = alerts.filter(a => a.ruleId.includes('jvm') && a.status === 'active');
+    const storageAlerts = alerts.filter(a => a.ruleId.includes('disk') && a.status === 'active');
+    
+    switch (metricType) {
+      case 'cpu':
+        if (cpuAlerts.some(a => a.severity === 'critical')) return 'critical';
+        if (cpuAlerts.some(a => a.severity === 'warning')) return 'warning';
+        break;
+      case 'jvm':
+        if (jvmAlerts.some(a => a.severity === 'critical')) return 'critical';
+        if (jvmAlerts.some(a => a.severity === 'warning')) return 'warning';
+        break;
+      case 'storage':
+        if (storageAlerts.some(a => a.severity === 'critical')) return 'critical';
+        if (storageAlerts.some(a => a.severity === 'warning')) return 'warning';
+        break;
+    }
+    return 'normal';
+  };
+
+  const getAlertClasses = (alertLevel: string) => {
+    switch (alertLevel) {
+      case 'critical':
+        return 'ring-4 ring-red-500/50 animate-pulse';
+      case 'warning':
+        return 'ring-2 ring-yellow-500/50';
+      default:
+        return '';
+    }
+  };
 
   // Performance data from context
   const performanceData = useMemo(() => {
@@ -197,10 +247,12 @@ export default function App() {
         ? 'bg-gradient-to-br from-red-50 via-rose-50 to-pink-50 dark:from-red-950 dark:via-rose-950 dark:to-pink-950' 
         : ''
     }`}>
-      <PageHeader />
+      <PageHeader onOpenAlerts={() => setShowAlertManagement(true)} />
       
       {/* Main content area with flex-1 to push footer down */}
-      <div className="flex-1 flex flex-col min-h-0">
+      <div className="flex-1 flex min-h-0 relative">
+        {/* Left content area */}
+        <div className="flex-1 overflow-y-auto flex flex-col gap-4 px-4 pt-4 pb-4">
 
         {error && !activeCluster ? (
           <div className="flex-1 flex items-center justify-center p-4">
@@ -275,7 +327,7 @@ export default function App() {
             </div>
             
             {/* CPU Usage */}
-            <div className="flex h-20 items-center rounded-lg bg-gradient-to-br from-orange-500 to-red-600 px-3 py-2 shadow-lg">
+            <div className={`flex h-20 items-center rounded-lg bg-gradient-to-br from-orange-500 to-red-600 px-3 py-2 shadow-lg transition-all duration-300 ${getAlertClasses(getResourceAlertLevel('cpu'))}`}>
               <div className="flex items-center gap-3 w-full">
                 <Cpu className="h-5 w-5 text-white/90 flex-shrink-0" />
                 <div className="flex flex-col justify-center gap-1 flex-1">
@@ -294,7 +346,7 @@ export default function App() {
             </div>
 
             {/* JVM Heap */}
-            <div className="flex h-20 items-center rounded-lg bg-gradient-to-br from-violet-500 to-purple-600 px-3 py-2 shadow-lg">
+            <div className={`flex h-20 items-center rounded-lg bg-gradient-to-br from-violet-500 to-purple-600 px-3 py-2 shadow-lg transition-all duration-300 ${getAlertClasses(getResourceAlertLevel('jvm'))}`}>
               <div className="flex items-center gap-3 w-full">
                 <Database className="h-5 w-5 text-white/90 flex-shrink-0" />
                 <div className="flex flex-col justify-center gap-1 flex-1">
@@ -313,7 +365,7 @@ export default function App() {
             </div>
 
             {/* Storage */}
-            <div className="flex h-20 items-center rounded-lg bg-gradient-to-br from-teal-500 to-emerald-600 px-3 py-2 shadow-lg">
+            <div className={`flex h-20 items-center rounded-lg bg-gradient-to-br from-teal-500 to-emerald-600 px-3 py-2 shadow-lg transition-all duration-300 ${getAlertClasses(getResourceAlertLevel('storage'))}`}>
               <div className="flex items-center gap-3 w-full">
                 <HardDrive className="h-5 w-5 text-white/90 flex-shrink-0" />
                 <div className="flex flex-col justify-center gap-1 flex-1">
@@ -431,6 +483,31 @@ export default function App() {
             </div>
           </>
         ) : null}
+        </div>
+
+        {/* Alert Management Panel - Right Side */}
+        {showAlertManagement && activeCluster && (
+          <div className="w-[480px] border-l border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 flex flex-col shadow-xl">
+            <AlertManagement
+              isOpen={true}
+              onClose={() => setShowAlertManagement(false)}
+              rules={alertRules}
+              history={getAlertHistory()}
+              settings={alertSettings}
+              stats={alertStats}
+              alerts={alerts}
+              clusterName={activeCluster?.label}
+              onUpdateRule={updateAlertRule}
+              onUpdateSettings={updateAlertSettings}
+              onResetToDefaults={resetAlertsToDefaults}
+              onAcknowledge={acknowledgeAlert}
+              onSnooze={snoozeAlert}
+              onDismiss={dismissAlert}
+              onClearHistory={clearAlertHistory}
+              isPanel={true}
+            />
+          </div>
+        )}
       </div>
       
       <Footer />

@@ -24,6 +24,7 @@ import {
   enableShardRebalance
 } from '@/services/elasticsearch';
 import { PerformanceTracker } from '@/utils/performanceTracker';
+import { alertEngine } from '@/utils/alertEngine';
 import type {
   CatHealthRow,
   ClusterHealth,
@@ -33,6 +34,7 @@ import type {
   ChartDataPoint
 } from '@/types/api';
 import type { ClusterConnection, CreateClusterInput } from '@/types/app';
+import type { AlertInstance, AlertRule, AlertSettings, AlertStats } from '../types/alerts';
 import { getStoredValue, setStoredValue } from '@/utils/storage';
 
 const POLL_STORAGE_KEY = 'eum/poll-interval';
@@ -48,6 +50,11 @@ type MonitoringContextValue = {
   loading: boolean;
   refreshing: boolean;
   error: string | null;
+  // Alert system
+  alerts: AlertInstance[];
+  alertStats: AlertStats;
+  alertRules: AlertRule[];
+  alertSettings: AlertSettings;
   connectionFailed: boolean;
   lastUpdated: string | null;
   refresh: () => Promise<void>;
@@ -61,6 +68,15 @@ type MonitoringContextValue = {
   addCluster: (input: CreateClusterInput) => void;
   updateCluster: (clusterLabel: string, input: CreateClusterInput) => void;
   deleteCluster: (clusterLabel: string) => void;
+  // Alert management
+  acknowledgeAlert: (alertId: string) => void;
+  snoozeAlert: (alertId: string, minutes: number) => void;
+  dismissAlert: (alertId: string) => void;
+  updateAlertRule: (ruleId: string, updates: Partial<AlertRule>) => void;
+  updateAlertSettings: (updates: Partial<AlertSettings>) => void;
+  resetAlertsToDefaults: () => void;
+  getAlertHistory: () => AlertInstance[];
+  clearAlertHistory: () => void;
 };
 
 const MonitoringContext = createContext<MonitoringContextValue | undefined>(undefined);
@@ -130,6 +146,12 @@ export function MonitoringProvider({ children }: { children: ReactNode }) {
   const prevSnapshotRef = useRef<MonitoringSnapshot | null>(null);
   const snapshotRef = useRef<MonitoringSnapshot | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
+  
+  // Alert system state
+  const [alerts, setAlerts] = useState<AlertInstance[]>([]);
+  const [alertStats, setAlertStats] = useState<AlertStats>(() => alertEngine.getAlertStats());
+  const [alertRules, setAlertRules] = useState<AlertRule[]>(() => alertEngine.getRules());
+  const [alertSettings, setAlertSettings] = useState<AlertSettings>(() => alertEngine.getSettings());
 
   // Keep snapshotRef in sync with snapshot state
   useEffect(() => {
@@ -216,10 +238,31 @@ export function MonitoringProvider({ children }: { children: ReactNode }) {
         mergeHealthHistory(prev, [clusterHealthToCatRow(health, fetchedAt)])
       );
       setConnectionFailed(false);
+
+      // Evaluate alerts with new data
+      try {
+        const newAlerts = alertEngine.evaluateAlerts(newSnapshot);
+        const activeAlerts = alertEngine.getActiveAlerts();
+        const stats = alertEngine.getAlertStats();
+        
+        setAlerts(activeAlerts);
+        setAlertStats(stats);
+        
+        // Show toast for new critical alerts
+        newAlerts.forEach(alert => {
+          if (alert.severity === 'critical') {
+            toast.error(`Critical Alert: ${alert.ruleName}`, {
+              description: `${alert.description} (${alert.currentValue}${alert.unit})`,
+              duration: 10000
+            });
+          }
+        });
+      } catch (alertError) {
+        console.error('Alert evaluation failed:', alertError);
+      }
     } catch (err) {
       // If request was aborted (cancelled), don't show error
       if (err instanceof Error && err.name === 'AbortError') {
-        console.log('🚫 Request was cancelled');
         setRefreshing(false);
         return;
       }
@@ -390,10 +433,9 @@ export function MonitoringProvider({ children }: { children: ReactNode }) {
     }
     
     if (prevActiveClusterLabelRef.current !== activeClusterLabel && activeCluster) {
-      console.log('🔄 Cluster changed from', prevActiveClusterLabelRef.current, 'to', activeClusterLabel);
       prevActiveClusterLabelRef.current = activeClusterLabel;
       
-      // Clear previous data immediately
+      // Clear all previous states immediately
       setSnapshot(null);
       setPerformanceMetrics({
         indexingRate: 0,
@@ -404,11 +446,31 @@ export function MonitoringProvider({ children }: { children: ReactNode }) {
       setChartData([]);
       setHealthHistory([]);
       
+      // Clear connection states
+      setConnectionFailed(false);
+      setError(null);
+      setLoading(false);
+      setRefreshing(false);
+      
+      // Clear health check state
+      healthCheckDoneRef.current = false;
+      
+      // Cancel any ongoing requests
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+        abortControllerRef.current = null;
+      }
+      
+      // Clear auto retry if running
+      if (autoRetryIntervalRef.current) {
+        clearInterval(autoRetryIntervalRef.current);
+        autoRetryIntervalRef.current = null;
+      }
+      
       // Reset performance tracker for new cluster
       performanceTrackerRef.current = new PerformanceTracker();
       
       // Fetch new cluster data
-      console.log('🚀 Fetching data for new cluster:', activeCluster.label);
       fetchAll();
     }
   }, [activeClusterLabel, activeCluster, fetchAll]);
@@ -632,21 +694,69 @@ export function MonitoringProvider({ children }: { children: ReactNode }) {
       clusters,
       activeCluster,
       setActiveCluster: (clusterLabel: string) => {
-        console.log('🎯 Setting active cluster to:', clusterLabel);
-        setActiveClusterLabel(clusterLabel);
-        healthCheckDoneRef.current = false;
-        setConnectionFailed(false);
-        setError(null);
+        // Cancel any ongoing requests first
+        if (abortControllerRef.current) {
+          abortControllerRef.current.abort();
+          abortControllerRef.current = null;
+        }
         
         // Clear auto retry if running
         if (autoRetryIntervalRef.current) {
           clearInterval(autoRetryIntervalRef.current);
           autoRetryIntervalRef.current = null;
         }
+        
+        // Reset all states
+        setActiveClusterLabel(clusterLabel);
+        healthCheckDoneRef.current = false;
+        setConnectionFailed(false);
+        setError(null);
+        setLoading(false);
+        setRefreshing(false);
       },
       addCluster,
       updateCluster,
       deleteCluster,
+      // Alert system
+      alerts,
+      alertStats,
+      alertRules,
+      alertSettings,
+      acknowledgeAlert: (alertId: string) => {
+        alertEngine.acknowledgeAlert(alertId);
+        setAlerts(alertEngine.getActiveAlerts());
+        setAlertStats(alertEngine.getAlertStats());
+      },
+      snoozeAlert: (alertId: string, minutes: number) => {
+        alertEngine.snoozeAlert(alertId, minutes);
+        setAlerts(alertEngine.getActiveAlerts());
+        setAlertStats(alertEngine.getAlertStats());
+      },
+      dismissAlert: (alertId: string) => {
+        alertEngine.dismissAlert(alertId);
+        setAlerts(alertEngine.getActiveAlerts());
+        setAlertStats(alertEngine.getAlertStats());
+      },
+      updateAlertRule: (ruleId: string, updates: Partial<AlertRule>) => {
+        alertEngine.updateRule(ruleId, updates);
+        setAlertRules(alertEngine.getRules());
+      },
+      updateAlertSettings: (updates: Partial<AlertSettings>) => {
+        alertEngine.updateSettings(updates);
+        setAlertSettings(alertEngine.getSettings());
+      },
+      resetAlertsToDefaults: () => {
+        alertEngine.resetToDefaults();
+        setAlertRules(alertEngine.getRules());
+        setAlertSettings(alertEngine.getSettings());
+        setAlerts(alertEngine.getActiveAlerts());
+        setAlertStats(alertEngine.getAlertStats());
+      },
+      getAlertHistory: () => alertEngine.getAlertHistory(),
+      clearAlertHistory: () => {
+        alertEngine.clearAlertHistory();
+        // No need to update state as history is fetched on demand
+      },
     };
   }, [
     snapshot,
@@ -667,7 +777,11 @@ export function MonitoringProvider({ children }: { children: ReactNode }) {
     handleDisableShardAllocation,
     handleStopShardRebalance,
     handleEnableShardAllocation,
-    handleEnableShardRebalance
+    handleEnableShardRebalance,
+    alerts,
+    alertStats,
+    alertRules,
+    alertSettings
   ]);
   
   return (

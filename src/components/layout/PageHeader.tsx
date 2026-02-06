@@ -1,6 +1,7 @@
 import { ThemeToggle } from '@/components/theme/ThemeToggle';
 import { useMonitoring } from '@/context/MonitoringProvider';
 import { ClusterSelector } from '@/components/layout/ClusterSelector';
+import { Bell } from 'lucide-react';
 
 const POLL_OPTIONS = [
   { label: 'Off', value: 0 },
@@ -9,12 +10,21 @@ const POLL_OPTIONS = [
   { label: '60s', value: 60000 }
 ];
 
-export function PageHeader() {
+interface PageHeaderProps {
+  onOpenAlerts?: () => void;
+}
+
+export function PageHeader({ onOpenAlerts }: PageHeaderProps) {
   const {
     pollInterval,
     setPollInterval,
-    lastUpdated
+    lastUpdated,
+    alerts,
+    activeCluster
   } = useMonitoring();
+
+  const alertCount = alerts.length;
+  const criticalAlerts = alerts.filter(a => a.severity === 'critical').length;
 
   return (
     <header className="flex-shrink-0 border-b border-gray-200 bg-white px-3 py-2 shadow-sm transition-colors duration-300 dark:border-gray-700 dark:bg-gray-800">
@@ -38,6 +48,30 @@ export function PageHeader() {
           </h1>
         </div>
         <div className="flex items-center gap-1.5 flex-shrink-0 justify-end pr-6">
+          {/* Alert Button */}
+          {activeCluster && onOpenAlerts && (
+            <button
+              onClick={onOpenAlerts}
+              className={`relative p-2 rounded-lg transition-colors ${
+                alertCount > 0
+                  ? criticalAlerts > 0
+                    ? 'text-red-600 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-900/20'
+                    : 'text-yellow-600 hover:bg-yellow-50 dark:text-yellow-400 dark:hover:bg-yellow-900/20'
+                  : 'text-gray-400 hover:bg-gray-100 dark:text-gray-500 dark:hover:bg-gray-700'
+              }`}
+              title={`${alertCount} active alerts`}
+            >
+              <Bell className={`h-5 w-5 ${criticalAlerts > 0 ? 'animate-pulse' : ''}`} />
+              {alertCount > 0 && (
+                <span className={`absolute -top-1 -right-1 h-4 w-4 rounded-full text-xs font-bold text-white flex items-center justify-center ${
+                  criticalAlerts > 0 ? 'bg-red-500' : 'bg-yellow-500'
+                }`}>
+                  {alertCount > 9 ? '9+' : alertCount}
+                </span>
+              )}
+            </button>
+          )}
+          
           <div className="pr-4">
             <ClusterSelector />
           </div>
