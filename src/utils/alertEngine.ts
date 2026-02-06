@@ -187,11 +187,31 @@ export class AlertEngine {
 
     for (const rule of this.rules) {
       if (this.evaluateRule(rule, data)) {
-        // Check if this alert is already active
+        // Check if there's any alert (active, resolved, or acknowledged) for this rule
         const existingAlert = Array.from(this.activeAlerts.values())
-          .find(alert => alert.ruleId === rule.id && alert.status === 'active');
+          .find(alert => alert.ruleId === rule.id);
 
-        if (!existingAlert) {
+        if (existingAlert) {
+          // Update current value
+          const currentValue = this.extractMetricValue(data, rule.metricPath);
+          if (currentValue !== null) {
+            existingAlert.currentValue = currentValue;
+            
+            // If alert was resolved/acknowledged, reactivate it
+            if (existingAlert.status !== 'active') {
+              existingAlert.status = 'active';
+              existingAlert.resolvedAt = undefined;
+              existingAlert.acknowledgedAt = undefined;
+              existingAlert.triggeredAt = new Date().toISOString();
+              newAlerts.push(existingAlert);
+              
+              // Send browser notification for critical alerts
+              if (rule.severity === 'critical' && this.settings.browserNotifications) {
+                this.sendBrowserNotification(existingAlert);
+              }
+            }
+          }
+        } else {
           // Check if we have started tracking this condition
           const conditionStartTime = this.alertConditionStartTime.get(rule.id);
           
@@ -233,7 +253,7 @@ export class AlertEngine {
         const activeAlert = Array.from(this.activeAlerts.values())
           .find(alert => alert.ruleId === rule.id && alert.status === 'active');
 
-        if (activeAlert) {
+        if (activeAlert && activeAlert.status === 'active') {
           activeAlert.status = 'resolved';
           activeAlert.resolvedAt = new Date().toISOString();
           
@@ -246,12 +266,8 @@ export class AlertEngine {
       }
     }
 
-    // Clean up old resolved alerts from active alerts map
-    for (const [id, alert] of this.activeAlerts.entries()) {
-      if (alert.status === 'resolved' || alert.status === 'acknowledged') {
-        this.activeAlerts.delete(id);
-      }
-    }
+    // Don't remove resolved alerts from activeAlerts map
+    // They might become active again if condition persists
 
     this.saveToStorage();
     return newAlerts;
