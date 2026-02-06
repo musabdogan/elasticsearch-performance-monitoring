@@ -2,14 +2,6 @@ export type ClusterStatus = 'green' | 'yellow' | 'red' | 'unknown';
 
 export type Maybe<T> = T | null;
 
-export interface CatAllocationRow {
-  shards: number;
-  diskAvail: string;
-  node: string;
-  ip?: string;
-  tier?: string;
-}
-
 export interface RecoveryRow {
   index: string;
   shard: string;
@@ -26,27 +18,28 @@ export interface RecoveryRow {
 export interface ClusterHealth {
   cluster_name: string;
   status: ClusterStatus;
-  timed_out: boolean;
   number_of_nodes: number;
-  number_of_data_nodes: number;
-  active_primary_shards: number;
   active_shards: number;
-  relocating_shards: number;
-  initializing_shards: number;
-  unassigned_shards: number;
-  delayed_unassigned_shards: number;
-  number_of_pending_tasks: number;
-  task_max_waiting_in_queue_millis: number;
-  active_shards_percent_as_number: number;
+  /** Optional fields when using filter_path (only essential fields requested) */
+  timed_out?: boolean;
+  number_of_data_nodes?: number;
+  active_primary_shards?: number;
+  relocating_shards?: number;
+  initializing_shards?: number;
+  unassigned_shards?: number;
+  delayed_unassigned_shards?: number;
+  number_of_pending_tasks?: number;
+  task_max_waiting_in_queue_millis?: number;
+  active_shards_percent_as_number?: number;
 }
 
 export interface NodeInfo {
   nodeRole: string;
   name: string;
   ip?: string;
-  version: string;
-  uptime: string;
-  upgradeOrder?: number | null;
+  /** Optional when nodes endpoint is called with minimal columns (e.g. node.role,name,ip) */
+  version?: string;
+  uptime?: string;
   tier?: string;
 }
 
@@ -84,12 +77,12 @@ export interface NodePerformanceStats {
     indexing: {
       index_total: number;
       index_time_in_millis: number;
-      index_current: number;
+      index_current?: number;
     };
     search: {
       query_total: number;
       query_time_in_millis: number;
-      query_current: number;
+      query_current?: number;
     };
   };
   /** OS-level stats including CPU load averages */
@@ -222,9 +215,7 @@ export interface MonitoringSnapshot {
   // Cluster info
   health: ClusterHealth;
   nodes: NodeInfo[];
-  allocation: CatAllocationRow[];
   settings: ClusterSettings;
-  catHealth: CatHealthRow[];
   fetchedAt: string;
 }
 

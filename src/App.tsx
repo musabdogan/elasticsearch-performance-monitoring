@@ -7,8 +7,125 @@ import NodeTable from '@/components/data/NodeTable';
 import { InfoPopup } from '@/components/ui/InfoPopup';
 import { useMonitoring } from '@/context/MonitoringProvider';
 import { useMemo, useState } from 'react';
-import { Activity, Zap, Clock, TrendingUp, Cpu, Database, HardDrive } from 'lucide-react';
+import { Activity, Zap, Clock, TrendingUp, Cpu, Database, HardDrive, Server, BarChart3, Search, Gauge } from 'lucide-react';
 import { formatBytes } from '@/utils/format';
+
+function WelcomeScreen() {
+  const apiEndpoints = [
+    {
+      endpoint: '/_cluster/health',
+      focus: 'Cluster Status',
+      metrics: 'Health state, Shard scaling, Relocation',
+      icon: <Server className="h-5 w-5" />
+    },
+    {
+      endpoint: '/_cat/nodes',
+      focus: 'Node Inventory', 
+      metrics: 'CPU/RAM usage, Node roles, Uptime',
+      icon: <Cpu className="h-5 w-5" />
+    },
+    {
+      endpoint: '/_cat/indices',
+      focus: 'Index Health',
+      metrics: 'Document count, Shard status, Disk space',
+      icon: <Database className="h-5 w-5" />
+    },
+    {
+      endpoint: '/_stats',
+      focus: 'Data Ops',
+      metrics: 'Search/Index latency, Total requests',
+      icon: <BarChart3 className="h-5 w-5" />
+    },
+    {
+      endpoint: '/_nodes/stats',
+      focus: 'OS & JVM',
+      metrics: 'Heap usage, Garbage collection, I/O stats',
+      icon: <Gauge className="h-5 w-5" />
+    }
+  ];
+
+  return (
+    <div className="flex-1 flex items-center justify-center p-8">
+      <div className="max-w-4xl mx-auto text-center space-y-8">
+        {/* Welcome Header */}
+        <div className="space-y-4">
+          <div className="flex items-center justify-center gap-3 mb-6">
+            <Search className="h-12 w-12 text-blue-600 dark:text-blue-400" />
+            <h1 className="text-4xl font-bold text-gray-900 dark:text-gray-100">
+              Welcome to Elasticsearch Monitoring Dashboard!
+            </h1>
+          </div>
+          
+          <p className="text-lg text-gray-600 dark:text-gray-300 max-w-3xl mx-auto leading-relaxed">
+            This interface provides real-time insights into your cluster's search and indexing performance. 
+            It is designed to show search rate, indexing rate, search latency and indexing latency.
+          </p>
+        </div>
+
+        {/* API Endpoints Table */}
+        <div className="bg-white dark:bg-gray-800 rounded-lg shadow-lg border border-gray-200 dark:border-gray-700 overflow-hidden">
+          <div className="px-6 py-4 bg-gradient-to-r from-blue-50 to-indigo-50 dark:from-blue-900/20 dark:to-indigo-900/20 border-b border-gray-200 dark:border-gray-700">
+            <h2 className="text-xl font-semibold text-gray-900 dark:text-gray-100 flex items-center gap-2">
+              <BarChart3 className="h-5 w-5 text-blue-600 dark:text-blue-400" />
+              Real-time Data from Management APIs
+            </h2>
+          </div>
+          
+          <div className="overflow-x-auto">
+            <table className="w-full">
+              <thead className="bg-gray-50 dark:bg-gray-700">
+                <tr>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+                    Endpoint
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+                    Monitoring Focus
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+                    Key Metrics
+                  </th>
+                </tr>
+              </thead>
+              <tbody className="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
+                {apiEndpoints.map((item, index) => (
+                  <tr key={index} className="hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors">
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <div className="flex items-center gap-3">
+                        <div className="text-blue-600 dark:text-blue-400">
+                          {item.icon}
+                        </div>
+                        <code className="text-sm font-mono bg-gray-100 dark:bg-gray-700 px-2 py-1 rounded text-gray-900 dark:text-gray-100">
+                          {item.endpoint}
+                        </code>
+                      </div>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <span className="text-sm font-medium text-gray-900 dark:text-gray-100">
+                        {item.focus}
+                      </span>
+                    </td>
+                    <td className="px-6 py-4">
+                      <span className="text-sm text-gray-600 dark:text-gray-300">
+                        {item.metrics}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        {/* Call to Action */}
+        <div className="bg-gradient-to-r from-blue-50 to-indigo-50 dark:from-blue-900/20 dark:to-indigo-900/20 rounded-lg p-6 border border-blue-200 dark:border-blue-800">
+          <p className="text-blue-800 dark:text-blue-200 font-medium">
+            🚀 Get started by adding your first Elasticsearch cluster using the cluster selector in the top navigation.
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 export default function App() {
   const {
@@ -47,9 +164,9 @@ export default function App() {
     
     const nodes = Object.values(snapshot.nodeStats.nodes);
     
-    // CPU Usage (average across nodes)
+    // CPU Usage (average across nodes; filtered API returns os.cpu.percent)
     const cpuValues = nodes
-      .map(node => node.process?.cpu?.percent || 0)
+      .map(node => node.os?.cpu?.percent ?? node.process?.cpu?.percent ?? 0)
       .filter(cpu => cpu > 0);
     const avgCpuUsage = cpuValues.length > 0 
       ? cpuValues.reduce((sum, cpu) => sum + cpu, 0) / cpuValues.length 
@@ -328,7 +445,9 @@ export default function App() {
             </section>
             </div>
         </>
-      ) : null}
+      ) : (
+        <WelcomeScreen />
+      )}
       <Footer />
     </main>
   );

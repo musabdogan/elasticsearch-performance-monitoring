@@ -1,7 +1,5 @@
 import { apiConfig, apiHeaders } from '@/config/api';
 import type {
-  CatAllocationRow,
-  CatHealthRow,
   ClusterHealth,
   ClusterSettings,
   IndexInfo,
@@ -12,8 +10,6 @@ import type {
   RecoveryRow
 } from '@/types/api';
 import type { ClusterConnection } from '@/types/app';
-import { calculateUpgradeOrder } from '@/utils/upgradeOrder';
-import { getHighestVersion } from '@/utils/version';
 
 type EndpointKey = keyof typeof apiConfig.endpoints;
 
@@ -118,24 +114,6 @@ async function requestWithBody<T>(
   }
 }
 
-export async function getAllocation(cluster: ClusterConnection): Promise<CatAllocationRow[]> {
-  const data = await request<
-    Array<{
-      shards: string | number;
-      'disk.avail': string;
-      node: string;
-      ip?: string;
-    }>
-  >('allocation', cluster);
-  
-  return data.map((row) => ({
-    shards: typeof row.shards === 'string' ? parseInt(row.shards, 10) : row.shards,
-    diskAvail: row['disk.avail'] || 'N/A',
-    node: row.node,
-    ip: row.ip
-  }));
-}
-
 export async function getRecovery(cluster: ClusterConnection): Promise<RecoveryRow[]> {
   const data = await request<
     Array<{
@@ -209,59 +187,44 @@ export async function getNodes(cluster: ClusterConnection): Promise<NodeInfo[]> 
       'node.role': string;
       name: string;
       ip?: string;
-      version: string;
-      uptime: string;
+      version?: string;
+      uptime?: string;
       'attr.data'?: string;
     }>
   >('nodes', cluster);
-  
-  const versions = catNodesData.map((row) => row.version).filter(Boolean);
-  const highestVersion = getHighestVersion(versions);
-  
+
   return catNodesData.map((row) => {
     const nodeInfo: NodeInfo = {
       nodeRole: row['node.role'],
       name: row.name,
       ip: row.ip,
-      version: row.version,
-      uptime: row.uptime
+      version: row.version ?? '',
+      uptime: row.uptime ?? ''
     };
-    
-    // Extract tier from attr.data
-    // attr.data can be: hot, warm, cold, frozen, or data (if no tier)
+
     const dataAttr = row['attr.data'];
     if (dataAttr) {
-      // Check if it's a tier (hot, warm, cold, frozen) or just "data"
       const tier = dataAttr.toLowerCase();
       if (['hot', 'warm', 'cold', 'frozen'].includes(tier)) {
         nodeInfo.tier = tier;
       } else if (tier === 'data') {
-        // If it's just "data", check node role for tier hint
-        // Data nodes without explicit tier are typically "data"
         nodeInfo.tier = 'data';
       }
     }
-    
-    // If no tier found, check node role
+
     if (!nodeInfo.tier) {
       const role = row['node.role'].toLowerCase();
       if (role.includes('d') || role.includes('data')) {
         nodeInfo.tier = 'data';
       }
     }
-    
-    nodeInfo.upgradeOrder = calculateUpgradeOrder(nodeInfo, highestVersion);
-    
+
     return nodeInfo;
   });
 }
 
 export async function getClusterSettings(cluster: ClusterConnection): Promise<ClusterSettings> {
   return request<ClusterSettings>('clusterSettings', cluster);
-}
-
-export async function getCatHealth(cluster: ClusterConnection): Promise<CatHealthRow[]> {
-  return request<CatHealthRow[]>('catHealth', cluster);
 }
 
 export async function flushCluster(cluster: ClusterConnection): Promise<{ flushed: boolean }> {

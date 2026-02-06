@@ -6,20 +6,18 @@ export const apiConfig = {
   pollIntervalMs: 10000,
   requestTimeoutMs: 8000,
   endpoints: {
-    // Performance monitoring endpoints
-    nodeStats: '/_nodes/stats/indices,os,jvm,process,fs?format=json',
-    indexStats: '/_stats?format=json',
+    // Performance monitoring endpoints (filter_path reduces response size)
+    nodeStats: '/_nodes/stats/indices,os,jvm,fs?filter_path=nodes.*.name,nodes.*.host,nodes.*.ip,nodes.*.roles,nodes.*.indices.indexing.index_total,nodes.*.indices.indexing.index_time_in_millis,nodes.*.indices.search.query_total,nodes.*.indices.search.query_time_in_millis,nodes.*.os.cpu.percent,nodes.*.jvm.mem.heap_used_in_bytes,nodes.*.jvm.mem.heap_max_in_bytes,nodes.*.fs.total.total_in_bytes,nodes.*.fs.total.available_in_bytes',
+    indexStats: '/_stats?filter_path=indices.*.primaries.indexing.index_total,indices.*.primaries.indexing.index_time_in_millis,indices.*.total.search.query_total,indices.*.total.search.query_time_in_millis,indices.*.primaries.store.size_in_bytes,indices.*.total.store.size_in_bytes',
     indices: '/_cat/indices?v&format=json&h=index,pri,rep,pri.store.size,store.size,docs.count&s=index',
 
     // Cluster info endpoints
-    clusterHealth: '/_cluster/health',
-    nodes: '/_cat/nodes?v&format=json&h=node.role,name,version,uptime,ip,attr.data&s=node.role,ip',
-    allocation: '/_cat/allocation?v&format=json&h=shards,disk.avail,node,ip&s=ip',
+    clusterHealth: '/_cluster/health?filter_path=cluster_name,status,number_of_nodes,active_shards',
+    nodes: '/_cat/nodes?v&format=json&h=node.role,name,ip&s=node.role,ip',
     recovery: '/_cat/recovery?v&format=json&h=index,shard,time,source_node,target_node,target,fp,bp,stage,translog,bytes_percent&s=ty:desc,index,bp:desc&active_only',
 
     // Utility endpoints
     clusterSettings: '/_cluster/settings?flat_settings',
-    catHealth: '/_cat/health?v&format=json',
     flush: '/_flush'
   }
 } as const;

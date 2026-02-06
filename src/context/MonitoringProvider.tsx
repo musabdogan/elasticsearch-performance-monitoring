@@ -16,8 +16,6 @@ import {
   getIndices,
   getClusterHealth,
   getNodes,
-  getAllocation,
-  getCatHealth,
   checkClusterHealth,
   flushCluster,
   disableShardAllocation,
@@ -28,6 +26,7 @@ import {
 import { PerformanceTracker } from '@/utils/performanceTracker';
 import type {
   CatHealthRow,
+  ClusterHealth,
   ClusterStatus,
   MonitoringSnapshot,
   PerformanceMetrics,
@@ -71,16 +70,36 @@ function mergeHealthHistory(
   incoming: CatHealthRow[]
 ): CatHealthRow[] {
   const merged = new Map<string, CatHealthRow>();
-  
+
   [...prev, ...incoming].forEach((item) => {
     merged.set(item.timestamp, item);
   });
-  
+
   return Array.from(merged.values())
     .sort(
       (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
     )
     .slice(-40);
+}
+
+/** Build a single CatHealthRow from cluster health for health history (replaces /_cat/health response) */
+function clusterHealthToCatRow(health: ClusterHealth, fetchedAt: string): CatHealthRow {
+  return {
+    epoch: '',
+    timestamp: fetchedAt,
+    cluster: health.cluster_name,
+    status: health.status,
+    'node.total': String(health.number_of_nodes ?? 0),
+    'node.data': '',
+    shards: String(health.active_shards ?? 0),
+    pri: '',
+    relo: '',
+    init: '',
+    unassign: '',
+    pending_tasks: '',
+    max_task_wait_time: '',
+    active_shards_percent: ''
+  };
 }
 
 export function MonitoringProvider({ children }: { children: ReactNode }) {
@@ -153,32 +172,20 @@ export function MonitoringProvider({ children }: { children: ReactNode }) {
       setError(null);
       setConnectionFailed(false);
       
-      const [
-        nodeStats,
-        indexStats,
-        indices,
-        health,
-        nodes,
-        allocation,
-        catHealth
-      ] = await Promise.all([
+      const [nodeStats, indexStats, indices, health, nodes] = await Promise.all([
         getNodeStats(activeCluster),
         getIndexStats(activeCluster),
         getIndices(activeCluster),
         getClusterHealth(activeCluster),
-        getNodes(activeCluster),
-        getAllocation(activeCluster),
-        getCatHealth(activeCluster)
+        getNodes(activeCluster)
       ]);
 
-      // Calculate performance metrics (cluster, node, or index specific)
       const performanceMetrics = performanceTrackerRef.current.addSnapshot(nodeStats, null, indexStats, null);
       const chartData = performanceTrackerRef.current.getChartData();
 
       const fetchedAt = new Date().toISOString();
       lastUpdatedRef.current = fetchedAt;
 
-      // Create new snapshot
       const newSnapshot: MonitoringSnapshot = {
         nodeStats,
         indexStats,
@@ -186,22 +193,19 @@ export function MonitoringProvider({ children }: { children: ReactNode }) {
         performanceMetrics,
         health,
         nodes,
-        allocation,
-        settings: { persistent: {}, transient: {} }, // Keep empty for now
-        catHealth,
+        settings: { persistent: {}, transient: {} },
         fetchedAt
       };
 
-      // Store previous snapshot from ref (always has latest value)
       prevSnapshotRef.current = snapshotRef.current;
-
-      // Update both state and ref
       snapshotRef.current = newSnapshot;
       setSnapshot(newSnapshot);
 
       setPerformanceMetrics(performanceMetrics);
       setChartData(chartData);
-      setHealthHistory((prev) => mergeHealthHistory(prev, catHealth));
+      setHealthHistory((prev) =>
+        mergeHealthHistory(prev, [clusterHealthToCatRow(health, fetchedAt)])
+      );
       setConnectionFailed(false);
     } catch (err) {
       let message = err instanceof Error ? err.message : 'Unknown error occurred';
