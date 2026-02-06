@@ -91,6 +91,16 @@ export function ClusterSelector() {
     }
   }, [showDropdown]);
 
+  // Listen for custom event from welcome screen
+  useEffect(() => {
+    const handleOpenClusterSelector = () => {
+      openDropdown();
+    };
+
+    window.addEventListener('openClusterSelector', handleOpenClusterSelector);
+    return () => window.removeEventListener('openClusterSelector', handleOpenClusterSelector);
+  }, []);
+
   const handleCancel = () => {
     if (clusters.length === 0) {
       handleClose();
@@ -161,7 +171,7 @@ export function ClusterSelector() {
 
       {/* Dropdown Panel */}
       {showDropdown && (
-        <div className="absolute left-0 top-full z-[9999] mt-2 w-80 origin-top-left animate-fade-in">
+        <div className="absolute right-0 top-full z-[9999] mt-2 w-80 origin-top-right animate-fade-in">
           <div className="rounded-xl border border-gray-200 bg-white shadow-xl dark:border-gray-700 dark:bg-gray-800">
             {/* Header */}
             <div className="border-b border-gray-100 px-3 py-2 dark:border-gray-700">

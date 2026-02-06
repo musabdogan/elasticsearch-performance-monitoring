@@ -129,6 +129,7 @@ export function MonitoringProvider({ children }: { children: ReactNode }) {
   const performanceTrackerRef = useRef<PerformanceTracker>(new PerformanceTracker());
   const prevSnapshotRef = useRef<MonitoringSnapshot | null>(null);
   const snapshotRef = useRef<MonitoringSnapshot | null>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
 
   // Keep snapshotRef in sync with snapshot state
   useEffect(() => {
@@ -167,6 +168,14 @@ export function MonitoringProvider({ children }: { children: ReactNode }) {
       if (connectionFailed) {
         return;
       }
+      
+      // Cancel any ongoing request
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+      }
+      
+      // Create new abort controller for this request
+      abortControllerRef.current = new AbortController();
       
       setRefreshing(true);
       setError(null);
@@ -208,6 +217,13 @@ export function MonitoringProvider({ children }: { children: ReactNode }) {
       );
       setConnectionFailed(false);
     } catch (err) {
+      // If request was aborted (cancelled), don't show error
+      if (err instanceof Error && err.name === 'AbortError') {
+        console.log('🚫 Request was cancelled');
+        setRefreshing(false);
+        return;
+      }
+      
       let message = err instanceof Error ? err.message : 'Unknown error occurred';
       
       if (message.toLowerCase().includes('fetch') && 
@@ -248,6 +264,10 @@ export function MonitoringProvider({ children }: { children: ReactNode }) {
     } finally {
       setLoading(false);
       setRefreshing(false);
+      // Clear the abort controller reference
+      if (abortControllerRef.current) {
+        abortControllerRef.current = null;
+      }
     }
   }, [activeCluster, connectionFailed]);
   
@@ -370,7 +390,25 @@ export function MonitoringProvider({ children }: { children: ReactNode }) {
     }
     
     if (prevActiveClusterLabelRef.current !== activeClusterLabel && activeCluster) {
+      console.log('🔄 Cluster changed from', prevActiveClusterLabelRef.current, 'to', activeClusterLabel);
       prevActiveClusterLabelRef.current = activeClusterLabel;
+      
+      // Clear previous data immediately
+      setSnapshot(null);
+      setPerformanceMetrics({
+        indexingRate: 0,
+        searchRate: 0,
+        indexLatency: 0,
+        searchLatency: 0
+      });
+      setChartData([]);
+      setHealthHistory([]);
+      
+      // Reset performance tracker for new cluster
+      performanceTrackerRef.current = new PerformanceTracker();
+      
+      // Fetch new cluster data
+      console.log('🚀 Fetching data for new cluster:', activeCluster.label);
       fetchAll();
     }
   }, [activeClusterLabel, activeCluster, fetchAll]);
@@ -394,6 +432,10 @@ export function MonitoringProvider({ children }: { children: ReactNode }) {
       if (autoRetryIntervalRef.current) {
         clearInterval(autoRetryIntervalRef.current);
         autoRetryIntervalRef.current = null;
+      }
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+        abortControllerRef.current = null;
       }
     };
   }, [activeCluster]);
@@ -590,8 +632,17 @@ export function MonitoringProvider({ children }: { children: ReactNode }) {
       clusters,
       activeCluster,
       setActiveCluster: (clusterLabel: string) => {
+        console.log('🎯 Setting active cluster to:', clusterLabel);
         setActiveClusterLabel(clusterLabel);
         healthCheckDoneRef.current = false;
+        setConnectionFailed(false);
+        setError(null);
+        
+        // Clear auto retry if running
+        if (autoRetryIntervalRef.current) {
+          clearInterval(autoRetryIntervalRef.current);
+          autoRetryIntervalRef.current = null;
+        }
       },
       addCluster,
       updateCluster,

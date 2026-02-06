@@ -7,22 +7,27 @@ Real-time performance monitoring dashboard for Elasticsearch clusters. Track ind
 
 ## 🚀 Install from Chrome Web Store
 
-**[Install Elasticsearch Upgrade Monitoring](https://chromewebstore.google.com/detail/jdljadeddpdnfndepcdegkeoejjalegm?utm_source=item-share-cb)**
+**[Install Elasticsearch Performance Monitoring](https://chromewebstore.google.com/detail/jdljadeddpdnfndepcdegkeoejjalegm?utm_source=item-share-cb)**
 
 ## Features
 
 - **Real-time Performance Monitoring**: Live tracking of indexing/search rates and latencies
 - **Interactive Charts**: Visual performance trends with sparkline charts
-- **Index Statistics**: Comprehensive index information (shards, size, document count)
+- **Advanced Search & Filtering**: Search indices by name, nodes by name/IP/role
+- **Index Statistics**: Comprehensive index information (shards, size, document count, shard size)
+- **Node Statistics**: Detailed node performance metrics with role information
 - **Multi-Cluster Support**: Manage multiple Elasticsearch clusters with easy switching
-- **Cluster Overview**: Cluster health and node information
+- **Cluster Resource Monitoring**: CPU usage, JVM heap, and storage utilization
+- **Cluster Overview**: Real-time cluster health and node information
 - **Performance Metrics**:
   - Indexing Rate (ops/sec)
   - Search Rate (ops/sec)
-  - Index Latency (ms/op)
-  - Search Latency (ms/op)
+  - Index Latency (ms/op with auto unit conversion)
+  - Search Latency (ms/op with auto unit conversion)
+- **Smart Data Management**: Automatic data retention and request cancellation
 - **Dark/Light Mode**: Toggle between light and dark themes
 - **Direct Connection**: Connects directly to Elasticsearch clusters (no proxy needed)
+- **Professional UI**: Modern, responsive design with comprehensive error handling
 
 ## Installation
 
@@ -34,8 +39,8 @@ Install directly from the [Chrome Web Store](https://chromewebstore.google.com/d
 
 1. Clone this repository:
 ```bash
-git clone https://github.com/musabdogan/elasticsearch-upgrade-monitoring.git
-cd elasticsearch-upgrade-monitoring
+git clone https://github.com/musabdogan/elasticsearch-performance-monitoring.git
+cd elasticsearch-performance-monitoring
 ```
 
 2. Install dependencies:
@@ -106,23 +111,35 @@ elasticsearch-performance-monitoring/
 
 ## Tech Stack
 
-- **React 18** + TypeScript
-- **Vite** (build tool)
-- **Tailwind CSS** (styling)
-- **Recharts** (data visualization)
-- **Lucide React** (icons)
-- **Chrome Storage API** (data persistence)
+- **React 18** + TypeScript (with strict mode)
+- **Vite** (build tool and development server)
+- **Tailwind CSS** (utility-first styling)
+- **Recharts** (data visualization and sparkline charts)
+- **Lucide React** (modern icon library)
+- **Chrome Storage API** (secure local data persistence)
+- **Elasticsearch Management APIs** (optimized with filter_path for performance)
 
 ## Performance Metrics
 
 The extension tracks these key Elasticsearch performance indicators:
 
+### Core Performance Metrics
 - **Indexing Rate**: Operations per second for index requests
 - **Search Rate**: Operations per second for search requests
-- **Index Latency**: Average time per indexing operation (ms)
-- **Search Latency**: Average time per search operation (ms)
+- **Index Latency**: Average time per indexing operation (auto-converts ms to seconds)
+- **Search Latency**: Average time per search operation (auto-converts ms to seconds)
 
-All metrics are calculated using real-time data from Elasticsearch's `_nodes/stats` API and displayed with interactive charts showing trends over the last 10 minutes.
+### Cluster Resource Metrics
+- **CPU Usage**: Average CPU utilization across cluster nodes
+- **JVM Heap Usage**: Average JVM heap utilization across cluster nodes
+- **Storage Usage**: Total cluster storage utilization with used/total breakdown
+
+### Index & Node Analytics
+- **Index Statistics**: Per-index metrics including shard size, document count, and performance
+- **Node Statistics**: Per-node performance with role identification and IP information
+- **Search & Filtering**: Real-time search across indices and nodes
+
+All metrics are calculated using real-time data from optimized Elasticsearch Management APIs with automatic data retention and request cancellation for optimal performance.
 
 ## Permissions
 

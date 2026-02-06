@@ -3,7 +3,7 @@ import { useMonitoring } from '@/context/MonitoringProvider';
 import { ClusterSelector } from '@/components/layout/ClusterSelector';
 
 const POLL_OPTIONS = [
-  { label: 'OFF', value: 0 },
+  { label: 'Off', value: 0 },
   { label: '10s', value: 10000 },
   { label: '30s', value: 30000 },
   { label: '60s', value: 60000 }
@@ -37,8 +37,10 @@ export function PageHeader() {
             Elasticsearch Performance Monitoring
           </h1>
         </div>
-        <div className="flex items-center gap-1.5 flex-shrink-0 justify-end">
-          <ClusterSelector />
+        <div className="flex items-center gap-1.5 flex-shrink-0 justify-end pr-6">
+          <div className="pr-4">
+            <ClusterSelector />
+          </div>
           <label className="flex items-center gap-1 text-xs text-gray-700 dark:text-gray-300">
             <span className="hidden sm:inline">Interval:</span>
             <select

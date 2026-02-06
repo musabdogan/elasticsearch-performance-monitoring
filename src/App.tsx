@@ -7,119 +7,98 @@ import NodeTable from '@/components/data/NodeTable';
 import { InfoPopup } from '@/components/ui/InfoPopup';
 import { useMonitoring } from '@/context/MonitoringProvider';
 import { useMemo, useState } from 'react';
-import { Activity, Zap, Clock, TrendingUp, Cpu, Database, HardDrive, Server, BarChart3, Search, Gauge } from 'lucide-react';
+import { Activity, Zap, Clock, TrendingUp, Cpu, Database, HardDrive, BarChart3 } from 'lucide-react';
 import { formatBytes } from '@/utils/format';
 
 function WelcomeScreen() {
   const apiEndpoints = [
-    {
-      endpoint: '/_cluster/health',
-      focus: 'Cluster Status',
-      metrics: 'Health state, Shard scaling, Relocation',
-      icon: <Server className="h-5 w-5" />
-    },
-    {
-      endpoint: '/_cat/nodes',
-      focus: 'Node Inventory', 
-      metrics: 'CPU/RAM usage, Node roles, Uptime',
-      icon: <Cpu className="h-5 w-5" />
-    },
-    {
-      endpoint: '/_cat/indices',
-      focus: 'Index Health',
-      metrics: 'Document count, Shard status, Disk space',
-      icon: <Database className="h-5 w-5" />
-    },
-    {
-      endpoint: '/_stats',
-      focus: 'Data Ops',
-      metrics: 'Search/Index latency, Total requests',
-      icon: <BarChart3 className="h-5 w-5" />
-    },
-    {
-      endpoint: '/_nodes/stats',
-      focus: 'OS & JVM',
-      metrics: 'Heap usage, Garbage collection, I/O stats',
-      icon: <Gauge className="h-5 w-5" />
-    }
+    { name: '/_cluster/health', desc: 'Cluster health' },
+    { name: '/_cat/nodes', desc: 'Node inventory & resource usage' },
+    { name: '/_cat/indices', desc: 'Index health & document counts' },
+    { name: '/_stats', desc: 'Search & indexing performance metrics' },
+    { name: '/_nodes/stats', desc: 'System resources & JVM statistics' }
   ];
 
   return (
-    <div className="flex-1 flex items-center justify-center p-8">
-      <div className="max-w-4xl mx-auto text-center space-y-8">
-        {/* Welcome Header */}
-        <div className="space-y-4">
-          <div className="flex items-center justify-center gap-3 mb-6">
-            <Search className="h-12 w-12 text-blue-600 dark:text-blue-400" />
-            <h1 className="text-4xl font-bold text-gray-900 dark:text-gray-100">
-              Welcome to Elasticsearch Monitoring Dashboard!
+    <div className="flex-1 flex items-center justify-center min-h-0 bg-gray-50 dark:bg-gray-900">
+      <div className="max-w-3xl mx-auto text-center space-y-8 p-8">
+        {/* Logo and Title */}
+        <div className="space-y-6">
+          <div className="flex items-center justify-center">
+            <img 
+              src="/searchali_logo.png" 
+              alt="SearchAli Logo" 
+              className="h-20 w-auto"
+            />
+          </div>
+          
+          <div className="space-y-3">
+            <h1 className="text-3xl font-light text-gray-900 dark:text-gray-100">
+              Elasticsearch Performance Monitoring Dashboard
             </h1>
-          </div>
-          
-          <p className="text-lg text-gray-600 dark:text-gray-300 max-w-3xl mx-auto leading-relaxed">
-            This interface provides real-time insights into your cluster's search and indexing performance. 
-            It is designed to show search rate, indexing rate, search latency and indexing latency.
-          </p>
-        </div>
-
-        {/* API Endpoints Table */}
-        <div className="bg-white dark:bg-gray-800 rounded-lg shadow-lg border border-gray-200 dark:border-gray-700 overflow-hidden">
-          <div className="px-6 py-4 bg-gradient-to-r from-blue-50 to-indigo-50 dark:from-blue-900/20 dark:to-indigo-900/20 border-b border-gray-200 dark:border-gray-700">
-            <h2 className="text-xl font-semibold text-gray-900 dark:text-gray-100 flex items-center gap-2">
-              <BarChart3 className="h-5 w-5 text-blue-600 dark:text-blue-400" />
-              Real-time Data from Management APIs
-            </h2>
-          </div>
-          
-          <div className="overflow-x-auto">
-            <table className="w-full">
-              <thead className="bg-gray-50 dark:bg-gray-700">
-                <tr>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
-                    Endpoint
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
-                    Monitoring Focus
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
-                    Key Metrics
-                  </th>
-                </tr>
-              </thead>
-              <tbody className="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
-                {apiEndpoints.map((item, index) => (
-                  <tr key={index} className="hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors">
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <div className="flex items-center gap-3">
-                        <div className="text-blue-600 dark:text-blue-400">
-                          {item.icon}
-                        </div>
-                        <code className="text-sm font-mono bg-gray-100 dark:bg-gray-700 px-2 py-1 rounded text-gray-900 dark:text-gray-100">
-                          {item.endpoint}
-                        </code>
-                      </div>
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <span className="text-sm font-medium text-gray-900 dark:text-gray-100">
-                        {item.focus}
-                      </span>
-                    </td>
-                    <td className="px-6 py-4">
-                      <span className="text-sm text-gray-600 dark:text-gray-300">
-                        {item.metrics}
-                      </span>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+            <p className="text-gray-500 dark:text-gray-400 text-lg font-light">
+              Monitor search performance, indexing rates, and cluster health in real-time
+            </p>
           </div>
         </div>
 
-        {/* Call to Action */}
-        <div className="bg-gradient-to-r from-blue-50 to-indigo-50 dark:from-blue-900/20 dark:to-indigo-900/20 rounded-lg p-6 border border-blue-200 dark:border-blue-800">
-          <p className="text-blue-800 dark:text-blue-200 font-medium">
-            🚀 Get started by adding your first Elasticsearch cluster using the cluster selector in the top navigation.
+        {/* Info Card */}
+        <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-6">
+          <div className="flex items-start gap-3">
+            <div className="flex-shrink-0 mt-0.5">
+              <div className="w-5 h-5 rounded-full bg-blue-500 dark:bg-blue-400 flex items-center justify-center">
+                <div className="w-2 h-2 bg-white rounded-full"></div>
+              </div>
+            </div>
+            <div className="text-left">
+              <p className="text-blue-900 dark:text-blue-100 font-medium mb-2">
+                Welcome to your Elasticsearch monitoring solution
+              </p>
+              <p className="text-blue-700 dark:text-blue-200 text-sm">
+                Get started by connecting your first Elasticsearch cluster to begin monitoring performance metrics.
+              </p>
+            </div>
+          </div>
+        </div>
+
+        {/* Add Cluster Button */}
+        <div className="flex justify-center">
+          <button 
+            onClick={() => {
+              // This will trigger the cluster selector modal
+              const event = new CustomEvent('openClusterSelector');
+              window.dispatchEvent(event);
+            }}
+            className="inline-flex items-center gap-3 px-8 py-4 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-lg shadow-lg hover:shadow-xl transition-all duration-200 transform hover:scale-105"
+          >
+            <div className="w-5 h-5 border-2 border-white rounded flex items-center justify-center">
+              <div className="w-3 h-0.5 bg-white"></div>
+              <div className="w-0.5 h-3 bg-white absolute"></div>
+            </div>
+            Add Elasticsearch Cluster
+          </button>
+        </div>
+
+        {/* API Endpoints - Trust Building */}
+        <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 p-6">
+          <h3 className="text-lg font-medium text-gray-900 dark:text-gray-100 mb-4 flex items-center gap-2">
+            <BarChart3 className="h-5 w-5 text-blue-500" />
+            Elasticsearch Management APIs Used
+          </h3>
+          <div className="grid grid-cols-1 gap-3 text-sm">
+            {apiEndpoints.map((api, index) => (
+              <div key={index} className="flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-700 rounded-lg">
+                <code className="font-mono text-blue-600 dark:text-blue-400 font-medium">
+                  {api.name}
+                </code>
+                <span className="text-gray-600 dark:text-gray-300 text-xs">
+                  {api.desc}
+                </span>
+              </div>
+            ))}
+          </div>
+          <p className="text-xs text-gray-500 dark:text-gray-400 mt-4 text-center">
+            All data is retrieved directly from official Elasticsearch Management APIs
           </p>
         </div>
       </div>
@@ -137,7 +116,8 @@ export default function App() {
     connectionFailed,
     refresh,
     retryConnection,
-    activeCluster
+    activeCluster,
+    clusters
   } = useMonitoring();
 
   // Performance data from context
@@ -218,36 +198,41 @@ export default function App() {
         : ''
     }`}>
       <PageHeader />
+      
+      {/* Main content area with flex-1 to push footer down */}
+      <div className="flex-1 flex flex-col min-h-0">
 
-      {error && !activeCluster ? (
-        <div className="flex-1 flex items-center justify-center p-4">
-          <div className="rounded-lg border border-gray-300 bg-white p-4 text-center shadow-lg dark:border-gray-700 dark:bg-gray-800">
-            <p className="text-sm text-gray-700 dark:text-gray-300">{error}</p>
-            <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">
-              Use the cluster selector in the header to add your first cluster.
-            </p>
+        {error && !activeCluster ? (
+          <div className="flex-1 flex items-center justify-center p-4">
+            <div className="rounded-lg border border-gray-300 bg-white p-4 text-center shadow-lg dark:border-gray-700 dark:bg-gray-800">
+              <p className="text-sm text-gray-700 dark:text-gray-300">{error}</p>
+              <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">
+                Use the cluster selector in the header to add your first cluster.
+              </p>
+            </div>
           </div>
-        </div>
-      ) : connectionFailed && error ? (
-        <div className="flex-1 flex items-center justify-center p-4">
-          <div className="rounded-lg border border-red-300 bg-red-50 p-4 text-center shadow-lg dark:border-red-700 dark:bg-red-900/20">
-            <p className="text-sm font-semibold text-red-800 dark:text-red-200">{error}</p>
-            <button
-              type="button"
-              onClick={retryConnection}
-              className="mt-3 rounded bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
-            >
-              Reload
-            </button>
+        ) : connectionFailed && error ? (
+          <div className="flex-1 flex items-center justify-center p-4">
+            <div className="rounded-lg border border-red-300 bg-red-50 p-4 text-center shadow-lg dark:border-red-700 dark:bg-red-900/20">
+              <p className="text-sm font-semibold text-red-800 dark:text-red-200">{error}</p>
+              <button
+                type="button"
+                onClick={retryConnection}
+                className="mt-3 rounded bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+              >
+                Reload
+              </button>
+            </div>
           </div>
-        </div>
-      ) : error ? (
-        <div className="flex-1 flex items-center justify-center p-4">
-          <ErrorState message={error} onRetry={refresh} />
-        </div>
-      ) : null}
+        ) : error ? (
+          <div className="flex-1 flex items-center justify-center p-4">
+            <ErrorState message={error} onRetry={refresh} />
+          </div>
+        ) : null}
 
-      {snapshot && !connectionFailed && performanceData ? (
+        {clusters.length === 0 ? (
+          <WelcomeScreen />
+        ) : snapshot && !connectionFailed && performanceData ? (
         <>
           <div className="flex-1 overflow-y-auto flex flex-col gap-4 px-4 pt-4 pb-4">
             {/* Cluster Overview */}
@@ -444,10 +429,10 @@ export default function App() {
               </div>
             </section>
             </div>
-        </>
-      ) : (
-        <WelcomeScreen />
-      )}
+          </>
+        ) : null}
+      </div>
+      
       <Footer />
     </main>
   );

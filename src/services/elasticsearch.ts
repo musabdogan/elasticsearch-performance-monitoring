@@ -162,7 +162,7 @@ export async function checkClusterHealth(
     const response = await fetch(url, {
       method: 'GET',
       headers,
-      signal: AbortSignal.timeout(3000) // 3 second timeout for health check
+      signal: AbortSignal.timeout(apiConfig.healthCheckTimeoutMs) // 1 second timeout for health check
     });
     
     if (response.ok) {

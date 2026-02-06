@@ -2,6 +2,7 @@ import { memo, useMemo, useState, useEffect, useCallback } from 'react';
 import { DataTable } from './DataTable';
 import Pagination from './Pagination';
 import { InfoPopup } from '@/components/ui/InfoPopup';
+import { Search, X } from 'lucide-react';
 import type { IndexInfo, IndexStats } from '@/types/api';
 
 const PAGE_SIZE = 10;
@@ -28,6 +29,7 @@ const IndexTable = memo<IndexTableProps>(({
   pollIntervalMs = 5000,
   loading = false
 }) => {
+  const [searchTerm, setSearchTerm] = useState('');
   const formatBytes = (bytes: number | string): string => {
     const n = typeof bytes === 'number' ? bytes : parseInt(String(bytes), 10) || 0;
     const units = ['B', 'KB', 'MB', 'GB', 'TB'];
@@ -141,11 +143,23 @@ const IndexTable = memo<IndexTableProps>(({
   const sortColumn = sortState.column;
   const sortDirection = sortState.direction;
 
+  // Filter data based on search term
+  const filteredData = useMemo(() => {
+    if (!searchTerm.trim()) {
+      return processedData;
+    }
+    
+    const term = searchTerm.toLowerCase();
+    return processedData.filter(index => 
+      index.index.toLowerCase().includes(term)
+    );
+  }, [processedData, searchTerm]);
+
   const sortedData = useMemo(() => {
     if (!sortColumn || !sortDirection) {
-      return [...processedData].sort((a, b) => b.indexingRate - a.indexingRate);
+      return [...filteredData].sort((a, b) => b.indexingRate - a.indexingRate);
     }
-    const sorted = [...processedData].sort((a, b) => {
+    const sorted = [...filteredData].sort((a, b) => {
       const aVal = a[sortColumn as keyof typeof a];
       const bVal = b[sortColumn as keyof typeof b];
       if (aVal == null && bVal == null) return 0;
@@ -171,7 +185,7 @@ const IndexTable = memo<IndexTableProps>(({
       return primarySort;
     });
     return sorted;
-  }, [processedData, sortColumn, sortDirection]);
+  }, [filteredData, sortColumn, sortDirection]);
 
   const totalPages = Math.max(1, Math.ceil(sortedData.length / PAGE_SIZE));
 
@@ -236,9 +250,30 @@ const IndexTable = memo<IndexTableProps>(({
             </div>
           </InfoPopup>
         </div>
-        <span className="text-xs text-gray-600 dark:text-gray-300">
-          {sortedData.length} indices
-        </span>
+        <div className="flex items-center gap-2">
+          {/* Search Input */}
+          <div className="relative">
+            <Search className="absolute left-2 top-1/2 transform -translate-y-1/2 h-3.5 w-3.5 text-gray-400" />
+            <input
+              type="text"
+              placeholder="Search indices..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="pl-8 pr-8 py-1.5 text-xs border border-gray-300 rounded-lg bg-white dark:bg-gray-700 dark:border-gray-600 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 w-40"
+            />
+            {searchTerm && (
+              <button
+                onClick={() => setSearchTerm('')}
+                className="absolute right-2 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            )}
+          </div>
+          <span className="text-xs text-gray-600 dark:text-gray-300">
+            {filteredData.length} of {processedData.length} indices
+          </span>
+        </div>
       </div>
 
       <div className="flex flex-1 flex-col min-h-0 overflow-hidden">

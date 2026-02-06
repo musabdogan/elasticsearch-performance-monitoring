@@ -2,6 +2,7 @@ import { memo, useMemo, useState, useEffect, useCallback } from 'react';
 import { DataTable } from './DataTable';
 import Pagination from './Pagination';
 import { InfoPopup } from '@/components/ui/InfoPopup';
+import { Search, X } from 'lucide-react';
 import type { NodeInfo, NodeStats } from '@/types/api';
 import { useMonitoring } from '@/context/MonitoringProvider';
 
@@ -52,6 +53,7 @@ interface NodeTableProps {
 
 const NodeTable = memo<NodeTableProps>(({ nodeStats, nodes = [], loading = false }) => {
   const { snapshot, prevSnapshot, pollInterval } = useMonitoring();
+  const [searchTerm, setSearchTerm] = useState('');
 
   // Use actual elapsed time between snapshots (fetchedAt) when available; else fallback to poll interval
   const timeIntervalSec = useMemo(() => {
@@ -129,9 +131,23 @@ const NodeTable = memo<NodeTableProps>(({ nodeStats, nodes = [], loading = false
   const sortColumn = sortState.column;
   const sortDirection = sortState.direction;
 
+  // Filter data based on search term
+  const filteredData = useMemo(() => {
+    if (!searchTerm.trim()) {
+      return nodeData;
+    }
+    
+    const term = searchTerm.toLowerCase();
+    return nodeData.filter(node => 
+      node.name.toLowerCase().includes(term) ||
+      node.ip.toLowerCase().includes(term) ||
+      node.nodeRole.toLowerCase().includes(term)
+    );
+  }, [nodeData, searchTerm]);
+
   const sortedData = useMemo(() => {
     if (!sortColumn || !sortDirection) {
-      return [...nodeData].sort((a, b) => {
+      return [...filteredData].sort((a, b) => {
         const primarySort = b.indexingRate - a.indexingRate;
         if (primarySort === 0) {
           // İkincil sıralama: node role'e göre
@@ -145,7 +161,7 @@ const NodeTable = memo<NodeTableProps>(({ nodeStats, nodes = [], loading = false
         return primarySort;
       });
     }
-    const sorted = [...nodeData].sort((a, b) => {
+    const sorted = [...filteredData].sort((a, b) => {
       const aVal = a[sortColumn as keyof typeof a];
       const bVal = b[sortColumn as keyof typeof b];
       if (aVal == null && bVal == null) return 0;
@@ -181,7 +197,7 @@ const NodeTable = memo<NodeTableProps>(({ nodeStats, nodes = [], loading = false
       return primarySort;
     });
     return sorted;
-  }, [nodeData, sortColumn, sortDirection]);
+  }, [filteredData, sortColumn, sortDirection]);
 
   const totalPages = Math.max(1, Math.ceil(sortedData.length / PAGE_SIZE));
 
@@ -246,9 +262,30 @@ const NodeTable = memo<NodeTableProps>(({ nodeStats, nodes = [], loading = false
             </div>
           </InfoPopup>
         </div>
-        <span className="text-xs text-gray-600 dark:text-gray-300">
-          {nodeData.length} nodes
-        </span>
+        <div className="flex items-center gap-2">
+          {/* Search Input */}
+          <div className="relative">
+            <Search className="absolute left-2 top-1/2 transform -translate-y-1/2 h-3.5 w-3.5 text-gray-400" />
+            <input
+              type="text"
+              placeholder="Search nodes..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="pl-8 pr-8 py-1.5 text-xs border border-gray-300 rounded-lg bg-white dark:bg-gray-700 dark:border-gray-600 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 w-40"
+            />
+            {searchTerm && (
+              <button
+                onClick={() => setSearchTerm('')}
+                className="absolute right-2 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            )}
+          </div>
+          <span className="text-xs text-gray-600 dark:text-gray-300">
+            {filteredData.length} of {nodeData.length} nodes
+          </span>
+        </div>
       </div>
 
       <div className="flex flex-1 flex-col min-h-0 overflow-hidden">
