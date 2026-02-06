@@ -78,9 +78,11 @@ const IndexTable = memo<IndexTableProps>(({
       const currIdxOps = currIdx?.index_total ?? 0;
       const prevIdxOps = prevIdx?.index_total ?? 0;
       const currIdxTime = currIdx?.index_time_in_millis ?? 0;
+      const prevIdxTime = prevIdx?.index_time_in_millis ?? 0;
       const currSearchOps = currSearch?.query_total ?? 0;
       const prevSearchOps = prevSearch?.query_total ?? 0;
       const currSearchTime = currSearch?.query_time_in_millis ?? 0;
+      const prevSearchTime = prevSearch?.query_time_in_millis ?? 0;
 
       // Show 0 for rate and latency when no previous snapshot exists
       const indexingRate =
@@ -91,8 +93,14 @@ const IndexTable = memo<IndexTableProps>(({
         hasPreviousSnapshot && timeIntervalSec > 0
           ? Math.max(0, (currSearchOps - prevSearchOps) / timeIntervalSec)
           : 0;
-      const indexLatency = hasPreviousSnapshot && currIdxOps > 0 ? currIdxTime / currIdxOps : 0;
-      const searchLatency = hasPreviousSnapshot && currSearchOps > 0 ? currSearchTime / currSearchOps : 0;
+      // Calculate latency from delta values (recent interval), not cumulative
+      const indexOpsDelta = Math.max(0, currIdxOps - prevIdxOps);
+      const indexTimeDelta = Math.max(0, currIdxTime - prevIdxTime);
+      const searchOpsDelta = Math.max(0, currSearchOps - prevSearchOps);
+      const searchTimeDelta = Math.max(0, currSearchTime - prevSearchTime);
+      
+      const indexLatency = hasPreviousSnapshot && indexOpsDelta > 0 ? indexTimeDelta / indexOpsDelta : 0;
+      const searchLatency = hasPreviousSnapshot && searchOpsDelta > 0 ? searchTimeDelta / searchOpsDelta : 0;
 
       // Total size = primary + replica shards (from _stats total.store.size_in_bytes)
       const totalSizeBytes = curr?.total?.store?.size_in_bytes ?? 0;

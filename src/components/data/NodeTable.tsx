@@ -85,13 +85,16 @@ const NodeTable = memo<NodeTableProps>(({ nodeStats, nodes = [], loading = false
       const indexingRate = timeIntervalSec > 0 ? Math.max(0, indexingOpsDiff / timeIntervalSec) : 0;
       const searchRate = timeIntervalSec > 0 ? Math.max(0, searchOpsDiff / timeIntervalSec) : 0;
 
-      const indexingOps = node.indices.indexing.index_total;
-      const searchOps = node.indices.search.query_total;
-      const indexingTime = node.indices.indexing.index_time_in_millis;
-      const searchTime = node.indices.search.query_time_in_millis;
-      // Show 0 latency on first snapshot (no previous data)
-      const indexLatency = prevNode && indexingOps > 0 ? indexingTime / indexingOps : 0;
-      const searchLatency = prevNode && searchOps > 0 ? searchTime / searchOps : 0;
+      // Calculate latency from delta values (recent interval), not cumulative
+      const indexingTimeDiff = prevNode
+        ? node.indices.indexing.index_time_in_millis - prevNode.indices.indexing.index_time_in_millis
+        : 0;
+      const searchTimeDiff = prevNode
+        ? node.indices.search.query_time_in_millis - prevNode.indices.search.query_time_in_millis
+        : 0;
+      
+      const indexLatency = prevNode && indexingOpsDiff > 0 ? Math.max(0, indexingTimeDiff) / indexingOpsDiff : 0;
+      const searchLatency = prevNode && searchOpsDiff > 0 ? Math.max(0, searchTimeDiff) / searchOpsDiff : 0;
 
       const nodeInfo = nameToNode.get(node.name);
       const nodeRole = nodeInfo?.nodeRole ?? '—';
