@@ -158,7 +158,7 @@ export class AlertEngine {
   }
 
   // Create alert instance from rule
-  private createAlertInstance(rule: AlertRule, currentValue: number | string): AlertInstance {
+  private createAlertInstance(rule: AlertRule, currentValue: number | string, clusterName?: string): AlertInstance {
     const now = new Date().toISOString();
     
     return {
@@ -173,12 +173,13 @@ export class AlertEngine {
       threshold: rule.threshold,
       unit: rule.unit,
       triggeredAt: now,
-      category: rule.category
+      category: rule.category,
+      clusterName
     };
   }
 
   // Evaluate all rules against monitoring data
-  public evaluateAlerts(data: MonitoringSnapshot): AlertInstance[] {
+  public evaluateAlerts(data: MonitoringSnapshot, clusterName?: string): AlertInstance[] {
     if (!this.settings.enabled) return [];
 
     const newAlerts: AlertInstance[] = [];
@@ -205,7 +206,7 @@ export class AlertEngine {
               // Condition has been true for 30+ seconds, create alert
               const currentValue = this.extractMetricValue(data, rule.metricPath);
               if (currentValue !== null) {
-                const alertInstance = this.createAlertInstance(rule, currentValue);
+                const alertInstance = this.createAlertInstance(rule, currentValue, clusterName);
                 this.activeAlerts.set(alertInstance.id, alertInstance);
                 this.alertHistory.unshift(alertInstance);
                 newAlerts.push(alertInstance);

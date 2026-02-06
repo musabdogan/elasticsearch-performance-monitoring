@@ -241,7 +241,7 @@ export function MonitoringProvider({ children }: { children: ReactNode }) {
 
       // Evaluate alerts with new data
       try {
-        const newAlerts = alertEngine.evaluateAlerts(newSnapshot);
+        const newAlerts = alertEngine.evaluateAlerts(newSnapshot, activeCluster?.label);
         const activeAlerts = alertEngine.getActiveAlerts();
         const stats = alertEngine.getAlertStats();
         

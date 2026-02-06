@@ -121,13 +121,10 @@ export default function App() {
     clusters,
     // Alert system
     alerts,
-    alertStats,
-    alertRules,
     alertSettings,
     acknowledgeAlert,
     snoozeAlert,
     dismissAlert,
-    updateAlertRule,
     updateAlertSettings,
     resetAlertsToDefaults,
     getAlertHistory,
@@ -491,13 +488,10 @@ export default function App() {
             <AlertManagement
               isOpen={true}
               onClose={() => setShowAlertManagement(false)}
-              rules={alertRules}
               history={getAlertHistory()}
               settings={alertSettings}
-              stats={alertStats}
               alerts={alerts}
               clusterName={activeCluster?.label}
-              onUpdateRule={updateAlertRule}
               onUpdateSettings={updateAlertSettings}
               onResetToDefaults={resetAlertsToDefaults}
               onAcknowledge={acknowledgeAlert}

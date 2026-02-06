@@ -32,6 +32,7 @@ export interface AlertInstance {
   resolvedAt?: string;
   snoozedUntil?: string;
   category: string;
+  clusterName?: string; // For cluster-specific filtering
   nodeId?: string; // For node-specific alerts
   indexName?: string; // For index-specific alerts
 }

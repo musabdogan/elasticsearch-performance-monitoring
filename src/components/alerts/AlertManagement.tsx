@@ -1,9 +1,7 @@
 import { memo, useState, useEffect } from 'react';
 import { 
   X, 
-  Settings, 
-  Shield, 
-  BarChart3,
+  Settings,
   RotateCcw,
   Bell,
   Volume2,
@@ -14,22 +12,17 @@ import {
 } from 'lucide-react';
 import AlertItem from './AlertItem';
 import type { 
-  AlertRule, 
   AlertInstance, 
-  AlertSettings, 
-  AlertStats
+  AlertSettings
 } from '../../types/alerts';
 
 interface AlertManagementProps {
   isOpen: boolean;
   onClose: () => void;
-  rules: AlertRule[];
   history: AlertInstance[];
   settings: AlertSettings;
-  stats: AlertStats;
   alerts?: AlertInstance[];
   clusterName?: string;
-  onUpdateRule?: (ruleId: string, updates: Partial<AlertRule>) => void;
   onUpdateSettings?: (updates: Partial<AlertSettings>) => void;
   onResetToDefaults?: () => void;
   onAcknowledge?: (alertId: string) => void;
@@ -39,7 +32,7 @@ interface AlertManagementProps {
   isPanel?: boolean; // New prop for panel mode
 }
 
-type TabType = 'alerts' | 'settings' | 'rules' | 'stats';
+type TabType = 'alerts' | 'settings';
 
 const AlertManagement = memo<AlertManagementProps>(({
   isOpen,
@@ -84,15 +77,22 @@ const AlertManagement = memo<AlertManagementProps>(({
 
   const tabs = [
     { id: 'alerts' as TabType, label: 'Active Alerts', icon: Bell },
-    { id: 'settings' as TabType, label: 'Settings', icon: Settings },
-    { id: 'rules' as TabType, label: 'Rules', icon: Shield },
-    { id: 'stats' as TabType, label: 'Statistics', icon: BarChart3 }
+    { id: 'settings' as TabType, label: 'Settings', icon: Settings }
   ];
 
   const renderTabContent = () => {
     const paddingClass = isPanel ? 'p-3' : 'p-6';
     const spacingClass = isPanel ? 'space-y-3' : 'space-y-4';
     const textSizeClass = isPanel ? 'text-base' : 'text-lg';
+    
+    // Filter alerts and history by cluster
+    const filteredAlerts = clusterName 
+      ? alerts.filter(alert => alert.clusterName === clusterName)
+      : alerts;
+    
+    const filteredHistory = clusterName 
+      ? history.filter(alert => alert.clusterName === clusterName)
+      : history;
     
     switch (activeTab) {
       case 'alerts':
@@ -101,7 +101,7 @@ const AlertManagement = memo<AlertManagementProps>(({
             <div className="flex items-center justify-between">
               <div>
                 <h3 className={`${textSizeClass} font-medium text-gray-900 dark:text-gray-100`}>
-                  Active Alerts ({alerts.length})
+                  Active Alerts ({filteredAlerts.length})
                 </h3>
                 {clusterName && (
                   <p className={`${isPanel ? 'text-xs' : 'text-sm'} text-gray-500 dark:text-gray-400`}>
@@ -109,17 +109,17 @@ const AlertManagement = memo<AlertManagementProps>(({
                   </p>
                 )}
               </div>
-              {alerts.length > 0 && (
+              {filteredAlerts.length > 0 && (
                 <div className="flex items-center gap-2">
                   <button
-                    onClick={() => alerts.forEach(alert => onAcknowledge?.(alert.id))}
+                    onClick={() => filteredAlerts.forEach(alert => onAcknowledge?.(alert.id))}
                     className={`flex items-center gap-2 px-3 py-1.5 ${isPanel ? 'text-xs' : 'text-sm'} bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors`}
                   >
                     <Check className="h-4 w-4" />
                     Acknowledge All
                   </button>
                   <button
-                    onClick={() => alerts.forEach(alert => onDismiss?.(alert.id))}
+                    onClick={() => filteredAlerts.forEach(alert => onDismiss?.(alert.id))}
                     className={`flex items-center gap-2 px-3 py-1.5 ${isPanel ? 'text-xs' : 'text-sm'} border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors`}
                   >
                     <X className="h-4 w-4" />
@@ -130,7 +130,7 @@ const AlertManagement = memo<AlertManagementProps>(({
             </div>
 
             <div className={spacingClass}>
-              {alerts.length === 0 ? (
+              {filteredAlerts.length === 0 ? (
                 <div>
                   <div className="text-center py-12">
                     <div className="w-16 h-16 bg-green-100 dark:bg-green-900/30 rounded-full flex items-center justify-center mx-auto mb-4">
@@ -143,12 +143,12 @@ const AlertManagement = memo<AlertManagementProps>(({
                   </div>
                   
                   {/* Show history if available */}
-                  {history.length > 0 && (
+                  {filteredHistory.length > 0 && (
                     <div className="border-t border-gray-200 dark:border-gray-700 pt-6">
                       <div className="flex items-center justify-between mb-4">
                         <div>
                           <h4 className={`${textSizeClass} font-medium text-gray-900 dark:text-gray-100`}>
-                            Alert History ({history.length})
+                            Alert History ({filteredHistory.length})
                           </h4>
                           {clusterName && (
                             <p className={`${isPanel ? 'text-xs' : 'text-sm'} text-gray-500 dark:text-gray-400`}>
@@ -166,7 +166,7 @@ const AlertManagement = memo<AlertManagementProps>(({
                       </div>
                       
                       <div className="space-y-3">
-                        {history.slice(0, 50).map(alert => (
+                        {filteredHistory.slice(0, 50).map(alert => (
                           <AlertItem
                             key={alert.id}
                             alert={alert}
@@ -178,7 +178,7 @@ const AlertManagement = memo<AlertManagementProps>(({
                   )}
                 </div>
               ) : (
-                alerts.map(alert => (
+                filteredAlerts.map(alert => (
                   <AlertItem
                     key={alert.id}
                     alert={alert}
