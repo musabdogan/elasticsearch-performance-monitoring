@@ -96,6 +96,7 @@ export class PerformanceTracker {
    * Calculate current performance metrics based on history
    */
   private calculateCurrentMetrics(): PerformanceMetrics {
+    // Need at least 2 data points to calculate rates
     if (this.history.length < 2) {
       return {
         indexingRate: 0,
@@ -119,16 +120,16 @@ export class PerformanceTracker {
       };
     }
 
-    const indexingOpsDiff = current.totalIndexingOps - previous.totalIndexingOps;
-    const searchOpsDiff = current.totalSearchOps - previous.totalSearchOps;
-    const indexTimeDiffMs = current.totalIndexTimeMs - previous.totalIndexTimeMs;
-    const searchTimeDiffMs = current.totalSearchTimeMs - previous.totalSearchTimeMs;
+    const indexingOpsDiff = Math.max(0, current.totalIndexingOps - previous.totalIndexingOps);
+    const searchOpsDiff = Math.max(0, current.totalSearchOps - previous.totalSearchOps);
+    const indexTimeDiffMs = Math.max(0, current.totalIndexTimeMs - previous.totalIndexTimeMs);
+    const searchTimeDiffMs = Math.max(0, current.totalSearchTimeMs - previous.totalSearchTimeMs);
 
     // Rate: delta ops / time. Latency: delta time / delta ops (recent interval), not cumulative average
     const indexLatency =
-      indexingOpsDiff > 0 ? indexTimeDiffMs / indexingOpsDiff : current.totalIndexTimeMs / Math.max(current.totalIndexingOps, 1);
+      indexingOpsDiff > 0 ? indexTimeDiffMs / indexingOpsDiff : 0;
     const searchLatency =
-      searchOpsDiff > 0 ? searchTimeDiffMs / searchOpsDiff : current.totalSearchTimeMs / Math.max(current.totalSearchOps, 1);
+      searchOpsDiff > 0 ? searchTimeDiffMs / searchOpsDiff : 0;
 
     return {
       indexingRate: Math.max(0, indexingOpsDiff / timeDiffSeconds),
