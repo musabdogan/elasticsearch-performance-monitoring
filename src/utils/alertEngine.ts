@@ -149,6 +149,10 @@ export class AlertEngine {
       case 'less_than':
         return numericValue < rule.threshold;
       case 'equals':
+        // For zero comparison, use a small tolerance to handle floating point precision
+        if (rule.threshold === 0) {
+          return Math.abs(numericValue) < 0.001; // Less than 0.001 is considered zero
+        }
         return numericValue === rule.threshold;
       case 'not_equals':
         return numericValue !== rule.threshold;
@@ -186,7 +190,22 @@ export class AlertEngine {
     const now = Date.now();
 
     for (const rule of this.rules) {
-      if (this.evaluateRule(rule, data)) {
+      const ruleResult = this.evaluateRule(rule, data);
+      
+      // Debug: Log rule evaluation for no-indexing-activity
+      if (rule.id === 'no-indexing-activity') {
+        const currentValue = this.extractMetricValue(data, rule.metricPath);
+        console.warn(`[DEBUG] No Indexing Activity Rule:`, {
+          ruleId: rule.id,
+          currentValue,
+          threshold: rule.threshold,
+          condition: rule.condition,
+          ruleResult,
+          existingAlert: Array.from(this.activeAlerts.values()).find(alert => alert.ruleId === rule.id)
+        });
+      }
+      
+      if (ruleResult) {
         // Check if there's any alert (active, resolved, or acknowledged) for this rule
         const existingAlert = Array.from(this.activeAlerts.values())
           .find(alert => alert.ruleId === rule.id);
@@ -248,6 +267,17 @@ export class AlertEngine {
       } else {
         // Condition is no longer met, clear tracking and resolve any active alerts
         this.alertConditionStartTime.delete(rule.id);
+        
+        // Debug: Log when no-indexing-activity condition is false
+        if (rule.id === 'no-indexing-activity') {
+          const currentValue = this.extractMetricValue(data, rule.metricPath);
+          console.warn(`[DEBUG] No Indexing Activity - Condition FALSE:`, {
+            ruleId: rule.id,
+            currentValue,
+            threshold: rule.threshold,
+            condition: rule.condition
+          });
+        }
         
         // Check if we should resolve any active alerts for this rule
         const activeAlert = Array.from(this.activeAlerts.values())
