@@ -1,8 +1,8 @@
 # Elasticsearch Performance Monitoring - Chrome Extension
 
 Real-time performance monitoring dashboard for Elasticsearch clusters. Track indexing/search rates, latencies, index statistics, and cluster performance metrics with interactive charts.
+<img width="1280" height="800" alt="performance (4)" src="https://github.com/user-attachments/assets/51368795-c0ca-49e4-9534-3f5ca5d0009e" />
 
-<img width="1280" height="800" alt="image" src="https://github.com/user-attachments/assets/763f4f65-8c03-4b30-b04e-e89dad3eebd0" />
 
 
 ## 🚀 Install from Chrome Web Store
