@@ -1,8 +1,6 @@
 # Elasticsearch Performance Monitoring - Chrome Extension
 
 Real-time performance monitoring dashboard for Elasticsearch clusters. Track indexing/search rates, latencies, index statistics, and cluster performance metrics with interactive charts.
-<img width="1280" height="800" alt="performance (4)" src="https://github.com/user-attachments/assets/51368795-c0ca-49e4-9534-3f5ca5d0009e" />
-
 
 
 ## 🚀 Install from Chrome Web Store
@@ -12,7 +10,6 @@ Real-time performance monitoring dashboard for Elasticsearch clusters. Track ind
 ## Features
 
 - **Real-time Performance Monitoring**: Live tracking of indexing/search rates and latencies
-- **Interactive Charts**: Visual performance trends with sparkline charts
 - **Advanced Search & Filtering**: Search indices by name, nodes by name/IP/role
 - **Index Statistics**: Comprehensive index information (shards, size, document count, shard size)
 - **Node Statistics**: Detailed node performance metrics with role information
@@ -24,10 +21,16 @@ Real-time performance monitoring dashboard for Elasticsearch clusters. Track ind
   - Search Rate (ops/sec)
   - Index Latency (ms/op with auto unit conversion)
   - Search Latency (ms/op with auto unit conversion)
-- **Smart Data Management**: Automatic data retention and request cancellation
-- **Dark/Light Mode**: Toggle between light and dark themes
 - **Direct Connection**: Connects directly to Elasticsearch clusters (no proxy needed)
-- **Professional UI**: Modern, responsive design with comprehensive error handling
+
+
+![5](https://github.com/user-attachments/assets/f7af64ee-513e-4d37-b136-fef476fd0c5e)
+![4](https://github.com/user-attachments/assets/a8160e12-a397-4e60-863f-e04b66a2308d)
+![3](https://github.com/user-attachments/assets/00ac329f-cb1f-45f1-b9f7-56aed956e867)
+![2](https://github.com/user-attachments/assets/45fe18ea-84d1-4d73-a903-54fc28df4b66)
+![1](https://github.com/user-attachments/assets/afc8fe04-4e8e-45ec-9588-5f7fe54136ec)
+
+
 
 ## Installation
 
