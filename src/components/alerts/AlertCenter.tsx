@@ -6,7 +6,6 @@ import {
   ChevronUp, 
   Filter,
   CheckCircle2,
-  X,
   AlertTriangle,
   AlertCircle,
   Info
@@ -17,9 +16,6 @@ import { ALERT_COLORS } from '../../config/alerts';
 
 interface AlertCenterProps {
   alerts: AlertInstance[];
-  onAcknowledge?: (alertId: string) => void;
-  onSnooze?: (alertId: string, minutes: number) => void;
-  onDismiss?: (alertId: string) => void;
   onOpenManagement?: () => void;
   className?: string;
 }
@@ -28,9 +24,6 @@ type FilterType = 'all' | AlertSeverity;
 
 const AlertCenter = memo<AlertCenterProps>(({ 
   alerts, 
-  onAcknowledge, 
-  onSnooze, 
-  onDismiss, 
   onOpenManagement,
   className = '' 
 }) => {
@@ -55,22 +48,6 @@ const AlertCenter = memo<AlertCenterProps>(({
 
   const totalAlerts = alerts.length;
   const hasAlerts = totalAlerts > 0;
-
-  const handleAcknowledgeAll = () => {
-    if (onAcknowledge) {
-      filteredAlerts.forEach(alert => {
-        if (alert.status === 'active') {
-          onAcknowledge(alert.id);
-        }
-      });
-    }
-  };
-
-  const handleDismissAll = () => {
-    if (onDismiss) {
-      filteredAlerts.forEach(alert => onDismiss(alert.id));
-    }
-  };
 
   const getFilterIcon = (severity: AlertSeverity) => {
     switch (severity) {
@@ -198,27 +175,6 @@ const AlertCenter = memo<AlertCenterProps>(({
           </div>
         )}
 
-        {/* Bulk Actions */}
-        {isExpanded && hasAlerts && filteredAlerts.length > 0 && (
-          <div className="mt-3 pt-3 border-t border-gray-200 dark:border-gray-700">
-            <div className="flex items-center gap-2">
-              <button
-                onClick={handleAcknowledgeAll}
-                className="flex items-center gap-1 px-2 py-1 text-xs font-medium text-green-600 hover:bg-green-50 dark:text-green-400 dark:hover:bg-green-900/20 rounded-md transition-colors"
-              >
-                <CheckCircle2 className="h-3.5 w-3.5" />
-                Acknowledge All
-              </button>
-              <button
-                onClick={handleDismissAll}
-                className="flex items-center gap-1 px-2 py-1 text-xs font-medium text-red-600 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-900/20 rounded-md transition-colors"
-              >
-                <X className="h-3.5 w-3.5" />
-                Dismiss All
-              </button>
-            </div>
-          </div>
-        )}
       </div>
 
       {/* Alert List */}
@@ -251,12 +207,7 @@ const AlertCenter = memo<AlertCenterProps>(({
           ) : (
             <div className="h-full overflow-y-auto p-2 space-y-2">
               {filteredAlerts.map(alert => (
-                <AlertItem
-                  key={alert.id}
-                  alert={alert}
-                  onSnooze={onSnooze}
-                  onDismiss={onDismiss}
-                />
+                <AlertItem key={alert.id} alert={alert} />
               ))}
             </div>
           )}

@@ -8,10 +8,10 @@ import { InfoPopup } from '@/components/ui/InfoPopup';
 import AlertManagement from '@/components/alerts/AlertManagement';
 import { useMonitoring } from '@/context/MonitoringProvider';
 import { useMemo, useState } from 'react';
-import { Activity, Zap, Clock, TrendingUp, Cpu, Database, HardDrive, BarChart3 } from 'lucide-react';
+import { Activity, Zap, Clock, TrendingUp, Cpu, Database, HardDrive, BarChart3, X } from 'lucide-react';
 import { formatBytes } from '@/utils/format';
 
-function WelcomeScreen() {
+function WelcomeScreen({ onClose }: { onClose?: () => void }) {
   const apiEndpoints = [
     { name: '/_cluster/health', desc: 'Cluster health' },
     { name: '/_cat/nodes', desc: 'Node inventory & resource usage' },
@@ -21,7 +21,16 @@ function WelcomeScreen() {
   ];
 
   return (
-    <div className="flex-1 flex items-center justify-center min-h-0 bg-gray-50 dark:bg-gray-900">
+    <div className="flex-1 flex items-center justify-center min-h-0 bg-gray-50 dark:bg-gray-900 relative">
+      {onClose && (
+        <button
+          onClick={onClose}
+          className="absolute top-4 right-4 p-2 rounded-lg text-gray-500 hover:bg-gray-200 dark:text-gray-400 dark:hover:bg-gray-700 transition-colors z-10"
+          title="Close"
+        >
+          <X className="h-5 w-5" />
+        </button>
+      )}
       <div className="max-w-3xl mx-auto text-center space-y-8 p-8">
         {/* Logo and Title */}
         <div className="space-y-6">
@@ -38,27 +47,8 @@ function WelcomeScreen() {
               Elasticsearch Performance Monitoring Dashboard
             </h1>
             <p className="text-gray-500 dark:text-gray-400 text-lg font-light">
-              Monitor search performance, indexing rates, and cluster health in real-time
+              Monitor search and indexing performance in real-time
             </p>
-          </div>
-        </div>
-
-        {/* Info Card */}
-        <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-6">
-          <div className="flex items-start gap-3">
-            <div className="flex-shrink-0 mt-0.5">
-              <div className="w-5 h-5 rounded-full bg-blue-500 dark:bg-blue-400 flex items-center justify-center">
-                <div className="w-2 h-2 bg-white rounded-full"></div>
-              </div>
-            </div>
-            <div className="text-left">
-              <p className="text-blue-900 dark:text-blue-100 font-medium mb-2">
-                Welcome to your Elasticsearch monitoring solution
-              </p>
-              <p className="text-blue-700 dark:text-blue-200 text-sm">
-                Get started by connecting your first Elasticsearch cluster to begin monitoring performance metrics.
-              </p>
-            </div>
           </div>
         </div>
 
@@ -121,16 +111,33 @@ export default function App() {
     clusters,
     // Alert system
     alerts,
+    alertRules,
     alertSettings,
-    snoozeAlert,
-    dismissAlert,
     updateAlertSettings,
+    updateAlertRule,
     resetAlertsToDefaults,
-    getAlertHistory,
-    clearAlertHistory
+    getAlertHistory
   } = useMonitoring();
 
   const [showAlertManagement, setShowAlertManagement] = useState(false);
+  const [showWelcomePage, setShowWelcomePage] = useState(false);
+  const [lastSeenAlertCount, setLastSeenAlertCount] = useState(0);
+  const [lastSeenCriticalCount, setLastSeenCriticalCount] = useState(0);
+
+  const unseenAlertCount = Math.max(0, alerts.length - lastSeenAlertCount);
+  const criticalCount = alerts.filter(a => a.severity === 'critical').length;
+  const unseenCriticalCount = Math.max(0, criticalCount - lastSeenCriticalCount);
+
+  const handleOpenAlerts = () => {
+    setShowAlertManagement((prev) => {
+      const next = !prev;
+      if (next) {
+        setLastSeenAlertCount(alerts.length);
+        setLastSeenCriticalCount(criticalCount);
+      }
+      return next;
+    });
+  };
 
   // Alert indicators for resource cards
   const getResourceAlertLevel = (metricType: 'cpu' | 'jvm' | 'storage') => {
@@ -243,12 +250,17 @@ export default function App() {
         ? 'bg-gradient-to-br from-red-50 via-rose-50 to-pink-50 dark:from-red-950 dark:via-rose-950 dark:to-pink-950' 
         : ''
     }`}>
-      <PageHeader onOpenAlerts={() => setShowAlertManagement(true)} />
+      <PageHeader
+        onOpenAlerts={handleOpenAlerts}
+        onOpenWelcome={() => setShowWelcomePage((prev) => !prev)}
+        unseenAlertCount={unseenAlertCount}
+        unseenCriticalCount={unseenCriticalCount}
+      />
       
       {/* Main content area with flex-1 to push footer down */}
       <div className="flex-1 flex min-h-0 relative">
-        {/* Left content area */}
-        <div className="flex-1 overflow-y-auto flex flex-col gap-4 px-4 pt-4 pb-4">
+        {/* Left content area - min-h-0 so it stays within viewport and only this area scrolls */}
+        <div className="flex-1 min-h-0 overflow-y-auto flex flex-col gap-4 px-4 pt-4 pb-4">
 
         {error && !activeCluster ? (
           <div className="flex-1 flex items-center justify-center p-4">
@@ -278,11 +290,11 @@ export default function App() {
           </div>
         ) : null}
 
-        {clusters.length === 0 ? (
-          <WelcomeScreen />
+        {clusters.length === 0 || showWelcomePage ? (
+          <WelcomeScreen onClose={showWelcomePage ? () => setShowWelcomePage(false) : undefined} />
         ) : snapshot && !connectionFailed && performanceData ? (
         <>
-          <div className="flex-1 overflow-y-auto flex flex-col gap-4 px-4 pt-4 pb-4">
+          <div className="flex-1 min-h-0 overflow-y-auto flex flex-col gap-4 px-4 pt-4 pb-4">
             {/* Cluster Overview */}
           <section className="grid grid-cols-7 gap-2 flex-shrink-0">
             <div
@@ -483,19 +495,18 @@ export default function App() {
 
         {/* Alert Management Panel - Right Side */}
         {showAlertManagement && activeCluster && (
-          <div className="w-[480px] border-l border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 flex flex-col shadow-xl">
+          <div className="w-[480px] min-h-0 flex flex-col overflow-y-auto border-l border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 shadow-xl">
             <AlertManagement
               isOpen={true}
               onClose={() => setShowAlertManagement(false)}
               history={getAlertHistory()}
               settings={alertSettings}
+              rules={alertRules}
               alerts={alerts}
               clusterName={activeCluster?.label}
               onUpdateSettings={updateAlertSettings}
+              onUpdateRule={updateAlertRule}
               onResetToDefaults={resetAlertsToDefaults}
-              onSnooze={snoozeAlert}
-              onDismiss={dismissAlert}
-              onClearHistory={clearAlertHistory}
               isPanel={true}
             />
           </div>

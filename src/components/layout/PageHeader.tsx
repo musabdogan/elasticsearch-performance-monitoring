@@ -1,7 +1,7 @@
 import { ThemeToggle } from '@/components/theme/ThemeToggle';
 import { useMonitoring } from '@/context/MonitoringProvider';
 import { ClusterSelector } from '@/components/layout/ClusterSelector';
-import { Bell } from 'lucide-react';
+import { Bell, Home } from 'lucide-react';
 
 const POLL_OPTIONS = [
   { label: 'Off', value: 0 },
@@ -12,19 +12,23 @@ const POLL_OPTIONS = [
 
 interface PageHeaderProps {
   onOpenAlerts?: () => void;
+  onOpenWelcome?: () => void;
+  /** Badge shows this count (e.g. unseen alerts); when 0, badge is hidden */
+  unseenAlertCount?: number;
+  /** Unseen critical count for red styling */
+  unseenCriticalCount?: number;
 }
 
-export function PageHeader({ onOpenAlerts }: PageHeaderProps) {
+export function PageHeader({ onOpenAlerts, onOpenWelcome, unseenAlertCount = 0, unseenCriticalCount = 0 }: PageHeaderProps) {
   const {
     pollInterval,
     setPollInterval,
     lastUpdated,
-    alerts,
     activeCluster
   } = useMonitoring();
 
-  const alertCount = alerts.length;
-  const criticalAlerts = alerts.filter(a => a.severity === 'critical').length;
+  const alertCount = unseenAlertCount;
+  const criticalAlerts = unseenCriticalCount;
 
   return (
     <header className="flex-shrink-0 border-b border-gray-200 bg-white px-3 py-2 shadow-sm transition-colors duration-300 dark:border-gray-700 dark:bg-gray-800">
@@ -48,6 +52,16 @@ export function PageHeader({ onOpenAlerts }: PageHeaderProps) {
           </h1>
         </div>
         <div className="flex items-center gap-1.5 flex-shrink-0 justify-end pr-6">
+          {/* Welcome Page Button */}
+          {onOpenWelcome && (
+            <button
+              onClick={onOpenWelcome}
+              className="p-2 rounded-lg text-gray-400 hover:bg-gray-100 dark:text-gray-500 dark:hover:bg-gray-700 transition-colors"
+              title="Welcome page"
+            >
+              <Home className="h-5 w-5" />
+            </button>
+          )}
           {/* Alert Button */}
           {activeCluster && onOpenAlerts && (
             <button

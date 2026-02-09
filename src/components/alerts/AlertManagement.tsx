@@ -1,50 +1,68 @@
 import { memo, useState, useEffect } from 'react';
 import { 
-  X, 
+  X,
   Settings,
   RotateCcw,
   Bell,
   Volume2,
   VolumeX,
   Save,
-  Check,
-  Trash2
+  Shield,
+  Check
 } from 'lucide-react';
 import AlertItem from './AlertItem';
 import type { 
   AlertInstance, 
-  AlertSettings
+  AlertSettings,
+  AlertRule
 } from '../../types/alerts';
+import { ALERT_COLORS } from '../../config/alerts';
 
 interface AlertManagementProps {
   isOpen: boolean;
   onClose: () => void;
   history: AlertInstance[];
   settings: AlertSettings;
+  rules?: AlertRule[];
   alerts?: AlertInstance[];
   clusterName?: string;
   onUpdateSettings?: (updates: Partial<AlertSettings>) => void;
+  onUpdateRule?: (ruleId: string, updates: Partial<AlertRule>) => void;
   onResetToDefaults?: () => void;
-  onSnooze?: (alertId: string, minutes: number) => void;
-  onDismiss?: (alertId: string) => void;
-  onClearHistory?: () => void;
   isPanel?: boolean; // New prop for panel mode
 }
 
-type TabType = 'alerts' | 'settings';
+type TabType = 'alerts' | 'settings' | 'rules';
+
+function formatCondition(condition: string): string {
+  const map: Record<string, string> = {
+    greater_than: '>',
+    less_than: '<',
+    equals: '=',
+    not_equals: '≠'
+  };
+  return map[condition] ?? condition;
+}
+
+function formatThreshold(rule: AlertRule): string {
+  if (rule.unit === 'status') return '(status check)';
+  if (rule.unit === 'bytes' && typeof rule.threshold === 'number' && rule.threshold >= 1024 ** 3) {
+    return `${(rule.threshold / (1024 ** 3)).toFixed(0)} GB`;
+  }
+  if (rule.unit === 'bytes') return `${rule.threshold} bytes`;
+  return `${rule.threshold} ${rule.unit}`;
+}
 
 const AlertManagement = memo<AlertManagementProps>(({
   isOpen,
   onClose,
   settings,
   history,
-  alerts = [],
+  rules = [],
   clusterName,
   onUpdateSettings,
+  onUpdateRule,
   onResetToDefaults,
-  onSnooze,
-  onDismiss,
-  onClearHistory,
   isPanel = false
 }) => {
   const [activeTab, setActiveTab] = useState<TabType>('alerts');
@@ -75,6 +93,7 @@ const AlertManagement = memo<AlertManagementProps>(({
 
   const tabs = [
     { id: 'alerts' as TabType, label: 'Active Alerts', icon: Bell },
+    { id: 'rules' as TabType, label: 'Rules', icon: Shield },
     { id: 'settings' as TabType, label: 'Settings', icon: Settings }
   ];
 
@@ -83,14 +102,28 @@ const AlertManagement = memo<AlertManagementProps>(({
     const spacingClass = isPanel ? 'space-y-3' : 'space-y-4';
     const textSizeClass = isPanel ? 'text-base' : 'text-lg';
     
-    // Filter alerts and history by cluster
-    const filteredAlerts = clusterName 
-      ? alerts.filter(alert => alert.clusterName === clusterName)
-      : alerts;
-    
-    const filteredHistory = clusterName 
+    // Single list: cluster-filtered, one alert per rule (longest duration wins)
+    const filteredByCluster = clusterName 
       ? history.filter(alert => alert.clusterName === clusterName)
       : history;
+    const byRule = new Map<string, typeof history[0]>();
+    for (const alert of filteredByCluster) {
+      const key = alert.ruleId;
+      const existing = byRule.get(key);
+      if (!existing) {
+        byRule.set(key, alert);
+      } else {
+        const existingStart = existing.firstTriggeredAt || existing.triggeredAt;
+        const currentStart = alert.firstTriggeredAt || alert.triggeredAt;
+        if (currentStart < existingStart) byRule.set(key, alert);
+      }
+    }
+    const sortedAlerts = Array.from(byRule.values()).sort((a, b) => {
+      if (a.status === 'active' && b.status !== 'active') return -1;
+      if (a.status !== 'active' && b.status === 'active') return 1;
+      return new Date(b.triggeredAt).getTime() - new Date(a.triggeredAt).getTime();
+    });
+    const activeCount = sortedAlerts.filter(a => a.status === 'active').length;
     
     switch (activeTab) {
       case 'alerts':
@@ -99,7 +132,7 @@ const AlertManagement = memo<AlertManagementProps>(({
             <div className="flex items-center justify-between">
               <div>
                 <h3 className={`${textSizeClass} font-medium text-gray-900 dark:text-gray-100`}>
-                  Active Alerts ({filteredAlerts.length})
+                  Alerts {activeCount > 0 ? `(${activeCount} active)` : ''}
                 </h3>
                 {clusterName && (
                   <p className={`${isPanel ? 'text-xs' : 'text-sm'} text-gray-500 dark:text-gray-400`}>
@@ -107,78 +140,89 @@ const AlertManagement = memo<AlertManagementProps>(({
                   </p>
                 )}
               </div>
-              {filteredAlerts.length > 0 && (
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => filteredAlerts.forEach(alert => onDismiss?.(alert.id))}
-                    className={`flex items-center gap-2 px-3 py-1.5 ${isPanel ? 'text-xs' : 'text-sm'} border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors`}
-                  >
-                    <X className="h-4 w-4" />
-                    Dismiss All
-                  </button>
-                </div>
-              )}
             </div>
 
             <div className={spacingClass}>
-              {filteredAlerts.length === 0 ? (
-                <div>
-                  <div className="text-center py-12">
-                    <div className="w-16 h-16 bg-green-100 dark:bg-green-900/30 rounded-full flex items-center justify-center mx-auto mb-4">
-                      <Check className="h-8 w-8 text-green-600 dark:text-green-400" />
-                    </div>
-                    <h4 className="font-medium text-gray-900 dark:text-gray-100 mb-2">All Clear!</h4>
-                    <p className={`${isPanel ? 'text-xs' : 'text-sm'} text-gray-500 dark:text-gray-400`}>
-                      No active alerts at the moment. Your Elasticsearch cluster is running smoothly.
-                    </p>
+              {sortedAlerts.length === 0 ? (
+                <div className="text-center py-12">
+                  <div className="w-16 h-16 bg-green-100 dark:bg-green-900/30 rounded-full flex items-center justify-center mx-auto mb-4">
+                    <Check className="h-8 w-8 text-green-600 dark:text-green-400" />
                   </div>
-                  
-                  {/* Show history if available */}
-                  {filteredHistory.length > 0 && (
-                    <div className="border-t border-gray-200 dark:border-gray-700 pt-6">
-                      <div className="flex items-center justify-between mb-4">
-                        <div>
-                          <h4 className={`${textSizeClass} font-medium text-gray-900 dark:text-gray-100`}>
-                            Alert History ({filteredHistory.length})
-                          </h4>
-                          {clusterName && (
-                            <p className={`${isPanel ? 'text-xs' : 'text-sm'} text-gray-500 dark:text-gray-400`}>
-                              Cluster: {clusterName}
-                            </p>
-                          )}
-                        </div>
-                        <button
-                          onClick={onClearHistory}
-                          className={`flex items-center gap-2 px-3 py-1.5 ${isPanel ? 'text-xs' : 'text-sm'} border border-red-300 dark:border-red-600 text-red-700 dark:text-red-400 rounded-lg hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors`}
-                        >
-                          <Trash2 className="h-4 w-4" />
-                          Clear History
-                        </button>
-                      </div>
-                      
-                      <div className="space-y-3">
-                        {filteredHistory.slice(0, 50).map(alert => (
-                          <AlertItem
-                            key={alert.id}
-                            alert={alert}
-                            compact={true}
-                          />
-                        ))}
-                      </div>
-                    </div>
-                  )}
+                  <h4 className="font-medium text-gray-900 dark:text-gray-100 mb-2">All Clear!</h4>
+                  <p className={`${isPanel ? 'text-xs' : 'text-sm'} text-gray-500 dark:text-gray-400`}>
+                    No active alerts at the moment. Your Elasticsearch cluster is running smoothly.
+                  </p>
                 </div>
               ) : (
-                filteredAlerts.map(alert => (
-                  <AlertItem
-                    key={alert.id}
-                    alert={alert}
-                    onSnooze={onSnooze}
-                    onDismiss={onDismiss}
-                    compact={isPanel}
-                  />
+                sortedAlerts.slice(0, 50).map(alert => (
+                  <AlertItem key={alert.id} alert={alert} compact={isPanel} />
                 ))
               )}
+            </div>
+          </div>
+        );
+
+      case 'rules':
+        return (
+          <div className={`${paddingClass} ${spacingClass} overflow-y-auto h-full`}>
+            <h3 className={`${textSizeClass} font-medium text-gray-900 dark:text-gray-100 mb-3`}>
+              Alert Rules & Thresholds
+            </h3>
+            <p className={`${isPanel ? 'text-xs' : 'text-sm'} text-gray-500 dark:text-gray-400 mb-4`}>
+              Predefined rules and their thresholds. Alerts trigger when conditions are met.
+            </p>
+            <div className="space-y-2">
+              {rules.map((rule) => {
+                const colors = ALERT_COLORS[rule.severity];
+                return (
+                  <div
+                    key={rule.id}
+                    className={`rounded-lg border-l-4 ${colors.border} ${colors.bg} p-3 shadow-sm transition-opacity ${!rule.enabled ? 'opacity-70' : ''}`}
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0 flex-1">
+                        <p className={`font-medium text-sm ${colors.text}`}>
+                          {rule.name}
+                        </p>
+                        <p className={`text-xs ${colors.textSecondary} mt-0.5`}>
+                          {rule.description}
+                        </p>
+                        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-2 text-xs">
+                          <span className={`px-1.5 py-0.5 rounded ${colors.bg} ${colors.text} font-medium capitalize`}>
+                            {rule.severity}
+                          </span>
+                          <span className="text-gray-500 dark:text-gray-400 capitalize">
+                            {rule.category}
+                          </span>
+                          <span className="text-gray-600 dark:text-gray-300 font-medium">
+                            {formatCondition(rule.condition)} {formatThreshold(rule)}
+                          </span>
+                          {!rule.enabled && (
+                            <span className="text-gray-400 dark:text-gray-500 italic">Disabled</span>
+                          )}
+                        </div>
+                      </div>
+                      {onUpdateRule && (
+                        <button
+                          type="button"
+                          onClick={() => onUpdateRule(rule.id, { enabled: !rule.enabled })}
+                          className={`relative inline-flex h-6 w-11 flex-shrink-0 items-center rounded-full transition-colors ${
+                            rule.enabled ? 'bg-blue-600' : 'bg-gray-300 dark:bg-gray-600'
+                          }`}
+                          title={rule.enabled ? 'Disable rule' : 'Enable rule'}
+                          aria-label={rule.enabled ? 'Disable rule' : 'Enable rule'}
+                        >
+                          <span
+                            className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                              rule.enabled ? 'translate-x-6' : 'translate-x-1'
+                            }`}
+                          />
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           </div>
         );
@@ -263,22 +307,6 @@ const AlertManagement = memo<AlertManagementProps>(({
                 </button>
               </div>
 
-              {/* History Retention */}
-              <div className="p-4 bg-gray-50 dark:bg-gray-700 rounded-lg">
-                <h4 className="font-medium text-gray-900 dark:text-gray-100 mb-2">History Retention</h4>
-                <p className={`${isPanel ? 'text-xs' : 'text-sm'} text-gray-500 dark:text-gray-400 mb-3`}>
-                  Determines how many days alert history will be kept. After this period, old alerts are automatically deleted and cleaned from localStorage.
-                </p>
-                <input
-                  type="number"
-                  min="1"
-                  max="365"
-                  value={tempSettings.maxHistoryDays}
-                  onChange={(e) => setTempSettings(prev => ({ ...prev, maxHistoryDays: parseInt(e.target.value) || 30 }))}
-                  className="w-20 px-3 py-1 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100"
-                />
-                <span className="ml-2 text-sm text-gray-500 dark:text-gray-400">days</span>
-              </div>
             </div>
 
             {/* Action Buttons */}
@@ -324,6 +352,7 @@ const AlertManagement = memo<AlertManagementProps>(({
           <button
             onClick={onClose}
             className="p-1.5 rounded-lg text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+            title="Close"
           >
             <X className="h-4 w-4" />
           </button>
@@ -377,6 +406,7 @@ const AlertManagement = memo<AlertManagementProps>(({
           <button
             onClick={onClose}
             className="p-2 rounded-lg text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+            title="Close"
           >
             <X className="h-5 w-5" />
           </button>

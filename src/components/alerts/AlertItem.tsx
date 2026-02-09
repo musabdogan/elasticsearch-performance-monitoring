@@ -3,29 +3,22 @@ import {
   AlertTriangle, 
   AlertCircle, 
   Info, 
-  X, 
   Clock,
   Server,
   Zap,
   Gauge,
-  Database
+  Database,
+  Check
 } from 'lucide-react';
 import type { AlertInstance } from '../../types/alerts';
 import { ALERT_COLORS, ALERT_CATEGORY_ICONS } from '../../config/alerts';
 
 interface AlertItemProps {
   alert: AlertInstance;
-  onSnooze?: (alertId: string, minutes: number) => void;
-  onDismiss?: (alertId: string) => void;
   compact?: boolean;
 }
 
-const AlertItem = memo<AlertItemProps>(({ 
-  alert, 
-  onSnooze, 
-  onDismiss, 
-  compact = false 
-}) => {
+const AlertItem = memo<AlertItemProps>(({ alert, compact = false }) => {
   const colors = ALERT_COLORS[alert.severity];
   
   const getSeverityIcon = () => {
@@ -97,6 +90,12 @@ const AlertItem = memo<AlertItemProps>(({
   const formatValue = (value: number | string, unit: string) => {
     if (typeof value === 'string') return value;
     
+    // Percent: show as integer (e.g. 81.65... => 82%)
+    if (unit === '%') {
+      const n = typeof value === 'number' ? value : parseFloat(String(value));
+      return `${Math.round(n)}%`;
+    }
+    
     // Handle byte values
     if (unit === 'bytes') {
       const gb = value / (1024 * 1024 * 1024);
@@ -113,7 +112,7 @@ const AlertItem = memo<AlertItemProps>(({
       return `${(value / 1000000).toFixed(1)}M`;
     }
     
-    return `${value}${unit}`;
+    return `${value} ${unit}`;
   };
 
   if (compact) {
@@ -146,17 +145,12 @@ const AlertItem = memo<AlertItemProps>(({
             </div>
           </div>
         </div>
-        <div className="flex items-center gap-1">
-          {onDismiss && (
-            <button
-              onClick={() => onDismiss(alert.id)}
-              className={`p-1 rounded hover:bg-white/20 ${colors.icon} transition-colors`}
-              title="Dismiss"
-            >
-              <X className="h-3 w-3" />
-            </button>
-          )}
-        </div>
+        {alert.status === 'resolved' && (
+          <span className="flex items-center gap-1 text-xs font-medium text-green-600 dark:text-green-400">
+            <Check className="h-3.5 w-3.5" />
+            Solved
+          </span>
+        )}
       </div>
     );
   }
@@ -193,28 +187,6 @@ const AlertItem = memo<AlertItemProps>(({
             </div>
           </div>
         </div>
-        
-        {/* Action Buttons */}
-        <div className="flex items-center gap-1 flex-shrink-0">
-          {onSnooze && (
-            <button
-              onClick={() => onSnooze(alert.id, 30)}
-              className={`p-1.5 rounded-md hover:bg-white/20 ${colors.icon} transition-colors`}
-              title="Snooze for 30 minutes"
-            >
-              <Clock className="h-3.5 w-3.5" />
-            </button>
-          )}
-          {onDismiss && (
-            <button
-              onClick={() => onDismiss(alert.id)}
-              className={`p-1.5 rounded-md hover:bg-white/20 ${colors.icon} transition-colors`}
-              title="Dismiss"
-            >
-              <X className="h-3.5 w-3.5" />
-            </button>
-          )}
-        </div>
       </div>
 
       {/* Description */}
@@ -239,10 +211,17 @@ const AlertItem = memo<AlertItemProps>(({
           </div>
         </div>
         
-        {/* Status Badge */}
-        <div className={`px-2 py-1 rounded-full text-xs font-medium ${colors.badge} text-white`}>
-          {alert.status.charAt(0).toUpperCase() + alert.status.slice(1)}
-        </div>
+        {/* Status: Solved (green tick) or Active badge */}
+        {alert.status === 'resolved' ? (
+          <span className="flex items-center gap-1.5 px-2 py-1 rounded-full text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300">
+            <Check className="h-3.5 w-3.5" />
+            Solved
+          </span>
+        ) : (
+          <div className={`px-2 py-1 rounded-full text-xs font-medium ${colors.badge} text-white`}>
+            Active
+          </div>
+        )}
       </div>
 
       {/* Additional Info for Node/Index specific alerts */}

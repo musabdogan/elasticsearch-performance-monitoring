@@ -30,11 +30,13 @@ function buildHeaders(cluster: ClusterConnection): HeadersInit {
 /**
  * Make a direct request to Elasticsearch cluster.
  * Chrome extension's host_permissions handles CORS.
+ * Pass abortSignal to cancel when e.g. cluster changes.
  */
 async function request<T>(
   endpoint: EndpointKey,
   cluster: ClusterConnection,
-  attempt = 1
+  attempt = 1,
+  abortSignal?: AbortSignal | null
 ): Promise<T> {
   const url = `${cluster.baseUrl}${apiConfig.endpoints[endpoint]}`;
   const headers = buildHeaders(cluster);
@@ -42,6 +44,16 @@ async function request<T>(
   try {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), apiConfig.requestTimeoutMs);
+    if (abortSignal) {
+      if (abortSignal.aborted) {
+        clearTimeout(timeout);
+        throw new DOMException('Aborted', 'AbortError');
+      }
+      abortSignal.addEventListener('abort', () => {
+        clearTimeout(timeout);
+        controller.abort();
+      });
+    }
     
     const response = await fetch(url, {
       method: 'GET',
@@ -57,14 +69,14 @@ async function request<T>(
     
     return await response.json() as T;
   } catch (error) {
-    if (attempt < 2) {
+    if (attempt < 2 && !(error instanceof Error && error.name === 'AbortError')) {
       await new Promise((resolve) => setTimeout(resolve, 500 * attempt));
-      return request<T>(endpoint, cluster, attempt + 1);
+      return request<T>(endpoint, cluster, attempt + 1, abortSignal);
     }
     
     if (error instanceof Error) {
       if (error.name === 'AbortError') {
-        throw new Error('Request timeout');
+        throw error;
       }
       if (error.message.toLowerCase().includes('fetch') || 
           error.message.toLowerCase().includes('network')) {
@@ -145,8 +157,8 @@ export async function getRecovery(cluster: ClusterConnection): Promise<RecoveryR
   }));
 }
 
-export async function getClusterHealth(cluster: ClusterConnection): Promise<ClusterHealth> {
-  return request<ClusterHealth>('clusterHealth', cluster);
+export async function getClusterHealth(cluster: ClusterConnection, signal?: AbortSignal | null): Promise<ClusterHealth> {
+  return request<ClusterHealth>('clusterHealth', cluster, 1, signal);
 }
 
 /**
@@ -181,7 +193,7 @@ export async function checkClusterHealth(
   }
 }
 
-export async function getNodes(cluster: ClusterConnection): Promise<NodeInfo[]> {
+export async function getNodes(cluster: ClusterConnection, signal?: AbortSignal | null): Promise<NodeInfo[]> {
   const catNodesData = await request<
     Array<{
       'node.role': string;
@@ -191,7 +203,7 @@ export async function getNodes(cluster: ClusterConnection): Promise<NodeInfo[]> 
       uptime?: string;
       'attr.data'?: string;
     }>
-  >('nodes', cluster);
+  >('nodes', cluster, 1, signal);
 
   return catNodesData.map((row) => {
     const nodeInfo: NodeInfo = {
@@ -265,12 +277,11 @@ export async function enableShardRebalance(cluster: ClusterConnection): Promise<
 }
 
 // Performance monitoring functions
-export async function getNodeStats(cluster: ClusterConnection): Promise<NodeStats> {
-  // In Elasticsearch 8.x, both indexing and search stats come from indices endpoint
-  return request<NodeStats>('nodeStats', cluster);
+export async function getNodeStats(cluster: ClusterConnection, signal?: AbortSignal | null): Promise<NodeStats> {
+  return request<NodeStats>('nodeStats', cluster, 1, signal);
 }
 
-export async function getIndices(cluster: ClusterConnection): Promise<IndexInfo[]> {
+export async function getIndices(cluster: ClusterConnection, signal?: AbortSignal | null): Promise<IndexInfo[]> {
   const data = await request<
     Array<{
       index: string;
@@ -280,7 +291,7 @@ export async function getIndices(cluster: ClusterConnection): Promise<IndexInfo[
       'store.size': string;
       'docs.count': string;
     }>
-  >('indices', cluster);
+  >('indices', cluster, 1, signal);
 
   return data.map((row) => ({
     index: row.index,
@@ -292,8 +303,8 @@ export async function getIndices(cluster: ClusterConnection): Promise<IndexInfo[
   }));
 }
 
-export async function getIndexStats(cluster: ClusterConnection): Promise<IndexStats> {
-  return request<IndexStats>('indexStats', cluster);
+export async function getIndexStats(cluster: ClusterConnection, signal?: AbortSignal | null): Promise<IndexStats> {
+  return request<IndexStats>('indexStats', cluster, 1, signal);
 }
 
 /**

@@ -6,6 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build && cp -r public/* dist/",
+    "build:chrome": "npm run build && node scripts/build-chrome.cjs",
+    "icons:store": "node scripts/resize-store-icon.mjs",
     "preview": "vite preview",
     "lint": "eslint src --ext ts,tsx"
   },
@@ -23,11 +25,11 @@
     "@types/react-dom": "^18.3.1",
     "@vitejs/plugin-react": "^4.3.4",
     "autoprefixer": "^10.4.20",
+    "eslint": "^8.57.0",
     "postcss": "^8.4.49",
+    "sharp": "^0.34.5",
     "tailwindcss": "^3.4.16",
     "typescript": "^5.6.3",
-    "vite": "^6.0.3",
-    "eslint": "^8.57.0"
+    "vite": "^6.0.3"
   }
 }
-

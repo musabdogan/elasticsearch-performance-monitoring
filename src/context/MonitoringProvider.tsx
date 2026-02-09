@@ -177,6 +177,7 @@ export function MonitoringProvider({ children }: { children: ReactNode }) {
   }, [activeCluster]);
   
   const fetchAll = useCallback(async () => {
+    let controller: AbortController | null = null;
     try {
       if (!activeCluster) {
         setError('Please add a cluster to start monitoring.');
@@ -196,18 +197,19 @@ export function MonitoringProvider({ children }: { children: ReactNode }) {
       }
       
       // Create new abort controller for this request
-      abortControllerRef.current = new AbortController();
+      controller = new AbortController();
+      abortControllerRef.current = controller;
+      const signal = controller.signal;
       
       setRefreshing(true);
       setError(null);
       setConnectionFailed(false);
-      
       const [nodeStats, indexStats, indices, health, nodes] = await Promise.all([
-        getNodeStats(activeCluster),
-        getIndexStats(activeCluster),
-        getIndices(activeCluster),
-        getClusterHealth(activeCluster),
-        getNodes(activeCluster)
+        getNodeStats(activeCluster, signal),
+        getIndexStats(activeCluster, signal),
+        getIndices(activeCluster, signal),
+        getClusterHealth(activeCluster, signal),
+        getNodes(activeCluster, signal)
       ]);
 
       const performanceMetrics = performanceTrackerRef.current.addSnapshot(nodeStats, null, indexStats, null);
@@ -306,8 +308,8 @@ export function MonitoringProvider({ children }: { children: ReactNode }) {
     } finally {
       setLoading(false);
       setRefreshing(false);
-      // Clear the abort controller reference
-      if (abortControllerRef.current) {
+      // Clear ref only if this fetch still owns it (avoid clearing when cluster changed and new fetch started)
+      if (abortControllerRef.current === controller) {
         abortControllerRef.current = null;
       }
     }

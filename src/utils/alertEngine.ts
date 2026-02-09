@@ -6,6 +6,7 @@ import type {
 } from '../types/alerts';
 import type { MonitoringSnapshot } from '../types/api';
 import { DEFAULT_ALERT_RULES, DEFAULT_ALERT_SETTINGS, ALERT_STORAGE_KEYS } from '../config/alerts';
+import { parseDiskSizeToBytes } from '@/utils/format';
 
 export class AlertEngine {
   private rules: AlertRule[] = [];
@@ -25,15 +26,52 @@ export class AlertEngine {
     try {
       // Load rules
       const storedRules = localStorage.getItem(ALERT_STORAGE_KEYS.RULES);
-      this.rules = storedRules ? JSON.parse(storedRules) : [...DEFAULT_ALERT_RULES];
+      let rules: AlertRule[] = storedRules ? JSON.parse(storedRules) : [...DEFAULT_ALERT_RULES];
+      // Remove deprecated "High Document Count" rule if present (from older config or custom)
+      rules = rules.filter(
+        (r) => r.id !== 'high-document-count' && r.name !== 'High Document Count'
+      );
+      // Rename "Medium Disk Usage" -> "High Disk Usage" for stored rules
+      rules = rules.map((r) => {
+        if (r.id === 'medium-disk-usage' || r.name === 'Medium Disk Usage') {
+          return { ...r, id: 'high-disk-usage', name: 'High Disk Usage' };
+        }
+        return r;
+      });
+      // Rename "Low Search Activity" -> "No Search Activity" for stored rules
+      rules = rules.map((r) => {
+        if (r.id === 'low-search-activity' || r.name === 'Low Search Activity') {
+          return { ...r, id: 'no-search-activity', name: 'No Search Activity' };
+        }
+        return r;
+      });
+      this.rules = rules;
 
       // Load settings
       const storedSettings = localStorage.getItem(ALERT_STORAGE_KEYS.SETTINGS);
       this.settings = storedSettings ? JSON.parse(storedSettings) : DEFAULT_ALERT_SETTINGS;
 
-      // Load history
+      // Load history (drop deprecated High Document Count alerts)
       const storedHistory = localStorage.getItem(ALERT_STORAGE_KEYS.HISTORY);
-      this.alertHistory = storedHistory ? JSON.parse(storedHistory) : [];
+      let history: AlertInstance[] = storedHistory ? JSON.parse(storedHistory) : [];
+      history = history.filter(
+        (a) => a.ruleId !== 'high-document-count' && a.ruleName !== 'High Document Count'
+      );
+      // Normalize Medium Disk Usage -> High Disk Usage in history
+      history = history.map((a) => {
+        if (a.ruleId === 'medium-disk-usage' || a.ruleName === 'Medium Disk Usage') {
+          return { ...a, ruleId: 'high-disk-usage', ruleName: 'High Disk Usage' };
+        }
+        return a;
+      });
+      // Normalize Low Search Activity -> No Search Activity in history
+      history = history.map((a) => {
+        if (a.ruleId === 'low-search-activity' || a.ruleName === 'Low Search Activity') {
+          return { ...a, ruleId: 'no-search-activity', ruleName: 'No Search Activity' };
+        }
+        return a;
+      });
+      this.alertHistory = history;
 
       // Clean old history
       this.cleanOldHistory();
@@ -68,25 +106,50 @@ export class AlertEngine {
   // Extract value from monitoring data using metric path
   private extractMetricValue(data: MonitoringSnapshot, path: string): number | string | null {
     try {
-      const pathParts = path.split('.');
-      let value: any = data;
-      
-      for (const part of pathParts) {
-        if (value && typeof value === 'object' && part in value) {
-          value = value[part];
-        } else {
-          return null;
+      // Handle derived metrics first (not present on snapshot; computed from nodeStats/indices)
+      if (path === 'clusterResources.storagePercent' || path === 'clusterResources.jvmHeap' || path === 'clusterResources.cpuUsage') {
+        // Derive cluster resource metrics from nodeStats (same logic as dashboard)
+        const nodeStats = data.nodeStats;
+        if (!nodeStats?.nodes) return null;
+        const nodes = Object.values(nodeStats.nodes);
+        if (nodes.length === 0) return null;
+
+        if (path === 'clusterResources.storagePercent') {
+          const storage = nodes.reduce((acc, node) => {
+            const total = node.fs?.total?.total_in_bytes ?? 0;
+            const available = node.fs?.total?.available_in_bytes ?? 0;
+            const used = total - available;
+            return { total: acc.total + total, used: acc.used + used };
+          }, { total: 0, used: 0 });
+          return storage.total > 0 ? (storage.used / storage.total) * 100 : 0;
+        }
+
+        if (path === 'clusterResources.jvmHeap') {
+          const jvmValues = nodes
+            .map(node => {
+              const used = node.jvm?.mem?.heap_used_in_bytes ?? 0;
+              const max = node.jvm?.mem?.heap_max_in_bytes ?? 0;
+              return max > 0 ? (used / max) * 100 : 0;
+            })
+            .filter(h => h > 0);
+          return jvmValues.length > 0 ? jvmValues.reduce((s, h) => s + h, 0) / jvmValues.length : 0;
+        }
+
+        if (path === 'clusterResources.cpuUsage') {
+          const cpuValues = nodes
+            .map(node => node.os?.cpu?.percent ?? node.process?.cpu?.percent ?? 0)
+            .filter(c => c > 0);
+          return cpuValues.length > 0 ? cpuValues.reduce((s, c) => s + c, 0) / cpuValues.length : 0;
         }
       }
 
-      // Handle special cases for derived metrics
       if (path === 'indices.maxShardSize') {
-        // Calculate max shard size from indices data
+        // Calculate max shard size from indices data (_cat/indices returns e.g. "20.4gb")
         if (data.indices && Array.isArray(data.indices)) {
           const maxSize = Math.max(...data.indices.map(index => {
-            const primarySize = parseFloat(index['pri.store.size']) || 0;
+            const primarySizeBytes = parseDiskSizeToBytes(index['pri.store.size']);
             const priCount = parseInt(index.pri, 10) || 1;
-            return primarySize / priCount; // Average shard size
+            return priCount > 0 ? primarySizeBytes / priCount : 0; // Avg shard size in bytes
           }));
           return maxSize;
         }
@@ -104,26 +167,29 @@ export class AlertEngine {
         return 0;
       }
 
-      return value;
+      // Path exists on snapshot (health.status, performanceMetrics.*, etc.)
+      const pathParts = path.split('.');
+      let value: unknown = data;
+      for (const part of pathParts) {
+        if (value && typeof value === 'object' && part in value) {
+          value = (value as Record<string, unknown>)[part];
+        } else {
+          return null;
+        }
+      }
+      return value as number | string | null;
     } catch (error) {
       console.error(`Failed to extract metric value for path: ${path}`, error);
       return null;
     }
   }
 
-  // Evaluate a single alert rule
-  private evaluateRule(rule: AlertRule, data: MonitoringSnapshot): boolean {
+  // Evaluate only the condition (no cooldown). Used to decide if alert stays active or gets resolved.
+  private evaluateRuleCondition(rule: AlertRule, data: MonitoringSnapshot): boolean {
     if (!rule.enabled) return false;
 
     const currentValue = this.extractMetricValue(data, rule.metricPath);
     if (currentValue === null || currentValue === undefined) return false;
-
-    // Check cooldown
-    const lastEvaluation = this.lastEvaluationTime.get(rule.id);
-    const now = Date.now();
-    if (lastEvaluation && (now - lastEvaluation) < (rule.cooldownMinutes * 60 * 1000)) {
-      return false;
-    }
 
     // Handle string comparisons (for cluster status)
     if (typeof currentValue === 'string') {
@@ -161,6 +227,11 @@ export class AlertEngine {
     }
   }
 
+  // Evaluate rule for creating NEW alert (condition only; no cooldown).
+  private evaluateRuleForNewAlert(rule: AlertRule, data: MonitoringSnapshot): boolean {
+    return this.evaluateRuleCondition(rule, data);
+  }
+
   // Create alert instance from rule
   private createAlertInstance(rule: AlertRule, currentValue: number | string, clusterName?: string): AlertInstance {
     const now = new Date().toISOString();
@@ -192,73 +263,42 @@ export class AlertEngine {
     const now = Date.now();
 
     for (const rule of this.rules) {
-      const ruleResult = this.evaluateRule(rule, data);
-      
-      // Debug: Log rule evaluation for no-indexing-activity
-      if (rule.id === 'no-indexing-activity') {
-        const currentValue = this.extractMetricValue(data, rule.metricPath);
-        console.warn(`[DEBUG] No Indexing Activity Rule:`, {
-          ruleId: rule.id,
-          currentValue,
-          threshold: rule.threshold,
-          condition: rule.condition,
-          ruleResult,
-          existingAlert: Array.from(this.activeAlerts.values()).find(alert => alert.ruleId === rule.id)
-        });
-      }
-      
-      if (ruleResult) {
-        // Check if there's any alert (active, resolved, or acknowledged) for this rule
-        const existingAlert = Array.from(this.activeAlerts.values())
-          .find(alert => alert.ruleId === rule.id);
+      // Use condition-only check (no cooldown) so we correctly keep/resolve existing alerts
+      const conditionMet = this.evaluateRuleCondition(rule, data);
+      const existingAlert = Array.from(this.activeAlerts.values()).find(alert => alert.ruleId === rule.id);
 
+      if (conditionMet) {
         if (existingAlert) {
-          // Update current value
+          // Condition still true: keep alert active and update value
           const currentValue = this.extractMetricValue(data, rule.metricPath);
           if (currentValue !== null) {
             existingAlert.currentValue = currentValue;
-            
-            // If alert was resolved, reactivate it
             if (existingAlert.status !== 'active') {
               existingAlert.status = 'active';
               existingAlert.resolvedAt = undefined;
               existingAlert.triggeredAt = new Date().toISOString();
-              existingAlert.count = (existingAlert.count || 1) + 1; // Increment count
+              existingAlert.count = (existingAlert.count || 1) + 1;
               newAlerts.push(existingAlert);
-              
-              // Send browser notification for critical alerts
               if (rule.severity === 'critical' && this.settings.browserNotifications) {
                 this.sendBrowserNotification(existingAlert);
               }
             }
           }
         } else {
-          // Check if we have started tracking this condition
+          // No existing alert: apply delay before creating new one
           const conditionStartTime = this.alertConditionStartTime.get(rule.id);
-          
           if (!conditionStartTime) {
-            // First time this condition is met, start tracking
             this.alertConditionStartTime.set(rule.id, now);
-          } else {
-            // Check if enough time has passed (30 seconds)
-            const timeSinceConditionStart = now - conditionStartTime;
-            
-            if (timeSinceConditionStart >= this.ALERT_DELAY_MS) {
-              // Condition has been true for 30+ seconds, create alert
+          } else if (now - conditionStartTime >= this.ALERT_DELAY_MS) {
+            if (this.evaluateRuleForNewAlert(rule, data)) {
               const currentValue = this.extractMetricValue(data, rule.metricPath);
               if (currentValue !== null) {
                 const alertInstance = this.createAlertInstance(rule, currentValue, clusterName);
                 this.activeAlerts.set(alertInstance.id, alertInstance);
                 this.alertHistory.unshift(alertInstance);
                 newAlerts.push(alertInstance);
-                
-                // Update last evaluation time
                 this.lastEvaluationTime.set(rule.id, now);
-                
-                // Clear the condition start time since alert is now created
                 this.alertConditionStartTime.delete(rule.id);
-
-                // Send browser notification for critical alerts
                 if (rule.severity === 'critical' && this.settings.browserNotifications) {
                   this.sendBrowserNotification(alertInstance);
                 }
@@ -270,18 +310,7 @@ export class AlertEngine {
         // Condition is no longer met, clear tracking and resolve any active alerts
         this.alertConditionStartTime.delete(rule.id);
         
-        // Debug: Log when no-indexing-activity condition is false
-        if (rule.id === 'no-indexing-activity') {
-          const currentValue = this.extractMetricValue(data, rule.metricPath);
-          console.warn(`[DEBUG] No Indexing Activity - Condition FALSE:`, {
-            ruleId: rule.id,
-            currentValue,
-            threshold: rule.threshold,
-            condition: rule.condition
-          });
-        }
-        
-        // Check if we should resolve any active alerts for this rule
+        // Resolve active alert for this rule
         const activeAlert = Array.from(this.activeAlerts.values())
           .find(alert => alert.ruleId === rule.id && alert.status === 'active');
 

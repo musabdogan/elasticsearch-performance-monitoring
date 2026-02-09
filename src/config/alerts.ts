@@ -13,11 +13,11 @@ export const DEFAULT_ALERT_RULES: AlertRule[] = [
     condition: 'equals',
     enabled: true,
     category: 'cluster',
-    cooldownMinutes: 5
+    cooldownMinutes: 0
   },
   {
-    id: 'high-jvm-heap',
-    name: 'High JVM Heap Usage',
+    id: 'critical-jvm-heap',
+    name: 'Critical JVM Heap Usage',
     description: 'JVM heap usage is critically high - risk of OutOfMemoryError',
     severity: 'critical',
     threshold: 85,
@@ -26,7 +26,7 @@ export const DEFAULT_ALERT_RULES: AlertRule[] = [
     condition: 'greater_than',
     enabled: true,
     category: 'resource',
-    cooldownMinutes: 2
+    cooldownMinutes: 0
   },
   {
     id: 'low-disk-space',
@@ -39,11 +39,11 @@ export const DEFAULT_ALERT_RULES: AlertRule[] = [
     condition: 'greater_than',
     enabled: true,
     category: 'resource',
-    cooldownMinutes: 5
+    cooldownMinutes: 0
   },
   {
     id: 'high-cpu-usage',
-    name: 'High CPU Usage',
+    name: 'Critical CPU Usage',
     description: 'CPU usage is critically high - performance severely impacted',
     severity: 'critical',
     threshold: 90,
@@ -52,7 +52,7 @@ export const DEFAULT_ALERT_RULES: AlertRule[] = [
     condition: 'greater_than',
     enabled: true,
     category: 'resource',
-    cooldownMinutes: 2
+    cooldownMinutes: 0
   },
   {
     id: 'slow-search-critical',
@@ -65,7 +65,7 @@ export const DEFAULT_ALERT_RULES: AlertRule[] = [
     condition: 'greater_than',
     enabled: true,
     category: 'performance',
-    cooldownMinutes: 1
+    cooldownMinutes: 0
   },
 
   // Warning Alerts
@@ -80,11 +80,11 @@ export const DEFAULT_ALERT_RULES: AlertRule[] = [
     condition: 'equals',
     enabled: true,
     category: 'cluster',
-    cooldownMinutes: 10
+    cooldownMinutes: 0
   },
   {
-    id: 'medium-jvm-heap',
-    name: 'Medium JVM Heap Usage',
+    id: 'high-jvm-heap',
+    name: 'High JVM Heap Usage',
     description: 'JVM heap usage is getting high - monitor closely',
     severity: 'warning',
     threshold: 75,
@@ -93,11 +93,11 @@ export const DEFAULT_ALERT_RULES: AlertRule[] = [
     condition: 'greater_than',
     enabled: true,
     category: 'resource',
-    cooldownMinutes: 5
+    cooldownMinutes: 0
   },
   {
-    id: 'medium-disk-usage',
-    name: 'Medium Disk Usage',
+    id: 'high-disk-usage',
+    name: 'High Disk Usage',
     description: 'Storage usage is getting high - consider cleanup or expansion',
     severity: 'warning',
     threshold: 80,
@@ -106,7 +106,7 @@ export const DEFAULT_ALERT_RULES: AlertRule[] = [
     condition: 'greater_than',
     enabled: true,
     category: 'resource',
-    cooldownMinutes: 10
+    cooldownMinutes: 0
   },
   {
     id: 'high-cpu-load',
@@ -119,7 +119,7 @@ export const DEFAULT_ALERT_RULES: AlertRule[] = [
     condition: 'greater_than',
     enabled: true,
     category: 'resource',
-    cooldownMinutes: 5
+    cooldownMinutes: 0
   },
   {
     id: 'slow-indexing',
@@ -132,20 +132,20 @@ export const DEFAULT_ALERT_RULES: AlertRule[] = [
     condition: 'greater_than',
     enabled: true,
     category: 'performance',
-    cooldownMinutes: 2
+    cooldownMinutes: 0
   },
   {
     id: 'large-shard-size',
     name: 'Large Shard Size Detected',
     description: 'One or more indices have very large shards - consider reindexing',
     severity: 'warning',
-    threshold: 50000000000, // 50GB in bytes
+    threshold: 50 * 1024 * 1024 * 1024, // 50 GiB in bytes (displays as 50 GB)
     unit: 'bytes',
     metricPath: 'indices.maxShardSize',
     condition: 'greater_than',
     enabled: true,
     category: 'index',
-    cooldownMinutes: 60
+    cooldownMinutes: 0
   },
 
   // Info Alerts
@@ -160,33 +160,20 @@ export const DEFAULT_ALERT_RULES: AlertRule[] = [
     condition: 'equals',
     enabled: true,
     category: 'performance',
-    cooldownMinutes: 30
+    cooldownMinutes: 0
   },
   {
-    id: 'low-search-activity',
-    name: 'Low Search Activity',
-    description: 'Very low search activity detected - verify if this is expected',
+    id: 'no-search-activity',
+    name: 'No Search Activity',
+    description: 'No search activity detected - verify if this is expected',
     severity: 'info',
-    threshold: 1,
+    threshold: 0,
     unit: 'ops/sec',
     metricPath: 'performanceMetrics.searchRate',
     condition: 'less_than',
-    enabled: false, // Disabled by default as it might be noisy
+    enabled: true, // Disabled by default as it might be noisy
     category: 'performance',
-    cooldownMinutes: 30
-  },
-  {
-    id: 'high-document-count',
-    name: 'High Document Count',
-    description: 'An index has a very high document count - monitor performance',
-    severity: 'info',
-    threshold: 1000000, // 1M documents
-    unit: 'docs',
-    metricPath: 'indices.maxDocCount',
-    condition: 'greater_than',
-    enabled: true,
-    category: 'index',
-    cooldownMinutes: 120
+    cooldownMinutes: 0
   }
 ];
 
