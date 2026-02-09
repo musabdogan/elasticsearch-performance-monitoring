@@ -76,3 +76,15 @@ export function parsePercentage(percent: string | null | undefined): number {
   return parseFloat(match[1]);
 }
 
+/**
+ * Format alert value for display (e.g. latency 1177.55 ms → "1.2 s")
+ */
+export function formatAlertValue(value: number | string, unit: string): string {
+  if (typeof value === 'string') return value;
+  if (unit === 'ms' && value >= 1000) {
+    return `${(value / 1000).toFixed(1)} s`;
+  }
+  if (unit === '%') return `${Math.round(value)}%`;
+  return `${value} ${unit}`;
+}
+

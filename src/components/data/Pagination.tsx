@@ -7,6 +7,8 @@ interface PaginationProps {
   totalItems: number;
   pageSize: number;
   onPageChange: (page: number) => void;
+  /** When true, render inline (no border/background) for use in header row */
+  inline?: boolean;
 }
 
 const Pagination = memo<PaginationProps>(function Pagination({
@@ -14,7 +16,8 @@ const Pagination = memo<PaginationProps>(function Pagination({
   totalPages,
   totalItems,
   pageSize,
-  onPageChange
+  onPageChange,
+  inline = false
 }) {
   if (totalPages <= 1 && totalItems <= pageSize) return null;
 
@@ -22,12 +25,14 @@ const Pagination = memo<PaginationProps>(function Pagination({
   const end = Math.min(currentPage * pageSize, totalItems);
 
   return (
-    <div className="flex items-center justify-between gap-2 border-t border-gray-200 bg-gray-50 px-3 py-2 dark:border-gray-600 dark:bg-gray-800/50">
-      <span className="text-xs text-gray-600 dark:text-gray-400">
-        {totalItems === 0
-          ? '0 items'
-          : `${start}-${end} of ${totalItems}`}
-      </span>
+    <div className={inline ? 'flex items-center gap-2' : 'flex items-center justify-between gap-1 border-b border-gray-200 bg-gray-50 px-2 py-1 dark:border-gray-600 dark:bg-gray-800/50'}>
+      {!inline && (
+        <span className="text-xs text-gray-600 dark:text-gray-400">
+          {totalItems === 0
+            ? '0 items'
+            : `${start}-${end} of ${totalItems}`}
+        </span>
+      )}
       <div className="flex items-center gap-1">
         <button
           type="button"

@@ -36,7 +36,7 @@ function WelcomeScreen({ onClose }: { onClose?: () => void }) {
         <div className="space-y-6">
           <div className="flex items-center justify-center">
             <img 
-              src="/searchali_logo.png" 
+              src="/icons/searchali_logo.png" 
               alt="SearchAli Logo" 
               className="h-20 w-auto"
             />
@@ -260,7 +260,7 @@ export default function App() {
       {/* Main content area with flex-1 to push footer down */}
       <div className="flex-1 flex min-h-0 relative">
         {/* Left content area - min-h-0 so it stays within viewport and only this area scrolls */}
-        <div className="flex-1 min-h-0 overflow-y-auto flex flex-col gap-4 px-4 pt-4 pb-4">
+        <div className="flex-1 min-h-0 overflow-y-auto flex flex-col gap-4 px-4 pt-2 pb-0.5">
 
         {error && !activeCluster ? (
           <div className="flex-1 flex items-center justify-center p-4">
@@ -294,11 +294,11 @@ export default function App() {
           <WelcomeScreen onClose={showWelcomePage ? () => setShowWelcomePage(false) : undefined} />
         ) : snapshot && !connectionFailed && performanceData ? (
         <>
-          <div className="flex-1 min-h-0 overflow-y-auto flex flex-col gap-4 px-4 pt-4 pb-4">
-            {/* Cluster Overview */}
-          <section className="grid grid-cols-7 gap-2 flex-shrink-0">
+          <div className="flex-1 min-h-0 flex flex-col gap-0 px-0 pt-0 pb-0 overflow-hidden">
+            {/* Cluster Overview - compact for one-page */}
+          <section className="grid grid-cols-7 gap-1.5 flex-shrink-0">
             <div
-                className={`flex h-20 flex-col justify-center items-center rounded-lg px-3 py-2 text-center shadow-lg ${
+                className={`flex h-14 flex-col justify-center items-center rounded-md px-2 py-1 text-center shadow ${
                 snapshot.health.status === 'green'
                   ? 'bg-gradient-to-br from-emerald-500 to-green-600'
                   : snapshot.health.status === 'yellow'
@@ -308,99 +308,68 @@ export default function App() {
                       : 'bg-gradient-to-br from-gray-500 to-gray-600'
               }`}
             >
-                <div className="text-2xl font-bold uppercase tracking-wider text-white">
-                {snapshot.health.status}
+                <div className="text-lg font-bold uppercase tracking-wider text-white leading-tight">{snapshot.health.status}</div>
+                <div className="text-[10px] font-medium uppercase tracking-wide text-white/80">Cluster Status</div>
               </div>
-                <div className="text-xs font-medium uppercase tracking-wide text-white/80">
-                Cluster Status
-                </div>
+              <div className="flex h-14 flex-col justify-center items-center rounded-md bg-gradient-to-br from-blue-500 to-cyan-600 px-2 py-1 text-center shadow">
+                <div className="text-lg font-bold text-white leading-tight">{clusterInfo?.nodeCount || 0}</div>
+                <div className="text-[10px] font-medium text-blue-100">Nodes</div>
               </div>
-              <div className="flex h-20 flex-col justify-center items-center rounded-lg bg-gradient-to-br from-blue-500 to-cyan-600 px-3 py-2 text-center shadow-lg">
-                <div className="text-2xl font-bold text-white">
-                  {clusterInfo?.nodeCount || 0}
-                </div>
-                <div className="text-xs font-medium text-blue-100">Nodes</div>
+              <div className="flex h-14 flex-col justify-center items-center rounded-md bg-gradient-to-br from-purple-500 to-pink-600 px-2 py-1 text-center shadow">
+                <div className="text-lg font-bold text-white leading-tight">{clusterInfo?.indexCount || 0}</div>
+                <div className="text-[10px] font-medium text-purple-100">Indices</div>
               </div>
-              <div className="flex h-20 flex-col justify-center items-center rounded-lg bg-gradient-to-br from-purple-500 to-pink-600 px-3 py-2 text-center shadow-lg">
-                <div className="text-2xl font-bold text-white">
-                  {clusterInfo?.indexCount || 0}
-                </div>
-                <div className="text-xs font-medium text-purple-100">Indices</div>
-                  </div>
-              <div className="flex h-20 flex-col justify-center items-center rounded-lg bg-gradient-to-br from-indigo-500 to-blue-600 px-3 py-2 text-center shadow-lg">
-                <div className="text-2xl font-bold text-white">
-                  {snapshot.health.active_shards}
-                </div>
-                <div className="text-xs font-medium text-indigo-100">Active Shards</div>
+              <div className="flex h-14 flex-col justify-center items-center rounded-md bg-gradient-to-br from-indigo-500 to-blue-600 px-2 py-1 text-center shadow">
+                <div className="text-lg font-bold text-white leading-tight">{snapshot.health.active_shards}</div>
+                <div className="text-[10px] font-medium text-indigo-100">Active Shards</div>
             </div>
-            
-            {/* CPU Usage */}
-            <div className={`flex h-20 items-center rounded-lg bg-gradient-to-br from-orange-500 to-red-600 px-3 py-2 shadow-lg transition-all duration-300 ${getAlertClasses(getResourceAlertLevel('cpu'))}`}>
-              <div className="flex items-center gap-3 w-full">
-                <Cpu className="h-5 w-5 text-white/90 flex-shrink-0" />
-                <div className="flex flex-col justify-center gap-1 flex-1">
-                  <div className="text-lg font-bold text-white">
-                    {clusterResources?.cpuUsage?.toFixed(0) || 0}%
+            {/* CPU */}
+            <div className={`flex h-14 items-center rounded-md bg-gradient-to-br from-orange-500 to-red-600 px-2 py-1 shadow transition-all duration-300 ${getAlertClasses(getResourceAlertLevel('cpu'))}`}>
+              <div className="flex items-center gap-2 w-full">
+                <Cpu className="h-4 w-4 text-white/90 flex-shrink-0" />
+                <div className="flex flex-col justify-center gap-0.5 flex-1 min-w-0">
+                  <div className="text-base font-bold text-white leading-tight">{clusterResources?.cpuUsage?.toFixed(0) || 0}%</div>
+                  <div className="w-full bg-white/20 rounded-full h-1">
+                    <div className="bg-white rounded-full h-1 transition-all duration-300" style={{ width: `${Math.min(clusterResources?.cpuUsage || 0, 100)}%` }} />
                   </div>
-                  <div className="w-full bg-white/20 rounded-full h-1.5">
-                    <div 
-                      className="bg-white rounded-full h-1.5 transition-all duration-300"
-                      style={{ width: `${Math.min(clusterResources?.cpuUsage || 0, 100)}%` }}
-                    />
-                  </div>
-                  <div className="text-xs font-medium text-white/80">CPU</div>
+                  <div className="text-[10px] font-medium text-white/80">CPU</div>
                 </div>
               </div>
             </div>
-
             {/* JVM Heap */}
-            <div className={`flex h-20 items-center rounded-lg bg-gradient-to-br from-violet-500 to-purple-600 px-3 py-2 shadow-lg transition-all duration-300 ${getAlertClasses(getResourceAlertLevel('jvm'))}`}>
-              <div className="flex items-center gap-3 w-full">
-                <Database className="h-5 w-5 text-white/90 flex-shrink-0" />
-                <div className="flex flex-col justify-center gap-1 flex-1">
-                  <div className="text-lg font-bold text-white">
-                    {clusterResources?.jvmHeap?.toFixed(0) || 0}%
+            <div className={`flex h-14 items-center rounded-md bg-gradient-to-br from-violet-500 to-purple-600 px-2 py-1 shadow transition-all duration-300 ${getAlertClasses(getResourceAlertLevel('jvm'))}`}>
+              <div className="flex items-center gap-2 w-full">
+                <Database className="h-4 w-4 text-white/90 flex-shrink-0" />
+                <div className="flex flex-col justify-center gap-0.5 flex-1 min-w-0">
+                  <div className="text-base font-bold text-white leading-tight">{clusterResources?.jvmHeap?.toFixed(0) || 0}%</div>
+                  <div className="w-full bg-white/20 rounded-full h-1">
+                    <div className="bg-white rounded-full h-1 transition-all duration-300" style={{ width: `${Math.min(clusterResources?.jvmHeap || 0, 100)}%` }} />
                   </div>
-                  <div className="w-full bg-white/20 rounded-full h-1.5">
-                    <div 
-                      className="bg-white rounded-full h-1.5 transition-all duration-300"
-                      style={{ width: `${Math.min(clusterResources?.jvmHeap || 0, 100)}%` }}
-                    />
-                  </div>
-                  <div className="text-xs font-medium text-white/80">JVM Heap</div>
+                  <div className="text-[10px] font-medium text-white/80">JVM Heap</div>
                 </div>
               </div>
             </div>
-
             {/* Storage */}
-            <div className={`flex h-20 items-center rounded-lg bg-gradient-to-br from-teal-500 to-emerald-600 px-3 py-2 shadow-lg transition-all duration-300 ${getAlertClasses(getResourceAlertLevel('storage'))}`}>
-              <div className="flex items-center gap-3 w-full">
-                <HardDrive className="h-5 w-5 text-white/90 flex-shrink-0" />
-                <div className="flex flex-col justify-center gap-1 flex-1">
-                  <div className="text-lg font-bold text-white">
-                    {clusterResources?.storagePercent?.toFixed(0) || 0}%
+            <div className={`flex h-14 items-center rounded-md bg-gradient-to-br from-teal-500 to-emerald-600 px-2 py-1 shadow transition-all duration-300 ${getAlertClasses(getResourceAlertLevel('storage'))}`}>
+              <div className="flex items-center gap-2 w-full">
+                <HardDrive className="h-4 w-4 text-white/90 flex-shrink-0" />
+                <div className="flex flex-col justify-center gap-0.5 flex-1 min-w-0">
+                  <div className="text-base font-bold text-white leading-tight">{clusterResources?.storagePercent?.toFixed(0) || 0}%</div>
+                  <div className="w-full bg-white/20 rounded-full h-1">
+                    <div className="bg-white rounded-full h-1 transition-all duration-300" style={{ width: `${Math.min(clusterResources?.storagePercent || 0, 100)}%` }} />
                   </div>
-                  <div className="w-full bg-white/20 rounded-full h-1.5">
-                    <div 
-                      className="bg-white rounded-full h-1.5 transition-all duration-300"
-                      style={{ width: `${Math.min(clusterResources?.storagePercent || 0, 100)}%` }}
-                    />
-                  </div>
-                  <div className="text-xs font-medium text-white/80">
-                    {clusterResources ? 
-                      `${formatBytes(clusterResources.storageUsed)} / ${formatBytes(clusterResources.storageTotal)}` 
-                      : 'Storage'
-                    }
+                  <div className="text-[10px] font-medium text-white/80 truncate">
+                    {clusterResources ? `${formatBytes(clusterResources.storageUsed)} / ${formatBytes(clusterResources.storageTotal)}` : 'Storage'}
                   </div>
                 </div>
               </div>
             </div>
           </section>
 
-            {/* Cluster Statistics */}
-            <section className="rounded-lg border border-gray-300 bg-white shadow-lg dark:bg-gray-800 dark:border-gray-600">
-              <div className="px-4 py-2">
-                <div className="flex items-center gap-2">
+            {/* Cluster Statistics - title left of metric cards */}
+            <section className="mt-2 rounded-lg border border-gray-300 bg-white shadow dark:bg-gray-800 dark:border-gray-600 flex-shrink-0">
+              <div className="flex items-stretch gap-2 p-2">
+                <div className="flex items-center gap-2 shrink-0 pr-2 border-r border-gray-200 dark:border-gray-600">
                   <h2 className="text-sm font-semibold text-gray-900 dark:text-gray-100">
                     Cluster Statistics
                   </h2>
@@ -424,8 +393,7 @@ export default function App() {
                     </div>
                   </InfoPopup>
                 </div>
-              </div>
-              <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 p-4">
+                <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 flex-1 min-w-0">
                 <MetricCard
                   title="Indexing Rate"
                   value={performanceData.metrics.indexingRate}
@@ -433,7 +401,7 @@ export default function App() {
                   data={[]}
                   dataKey="indexingRate"
                   color="#10b981"
-                  icon={<TrendingUp className="h-4 w-4" />}
+                  icon={<TrendingUp className="h-3.5 w-3.5" />}
                 />
                 <MetricCard
                   title="Search Rate"
@@ -442,7 +410,7 @@ export default function App() {
                   data={[]}
                   dataKey="searchRate"
                   color="#06b6d4"
-                  icon={<Activity className="h-4 w-4" />}
+                  icon={<Activity className="h-3.5 w-3.5" />}
                 />
                 <MetricCard
                   title="Index Latency"
@@ -451,7 +419,7 @@ export default function App() {
                   data={[]}
                   dataKey="indexLatency"
                   color="#f59e0b"
-                  icon={<Clock className="h-4 w-4" />}
+                  icon={<Clock className="h-3.5 w-3.5" />}
                 />
                 <MetricCard
                   title="Search Latency"
@@ -460,15 +428,16 @@ export default function App() {
                   data={[]}
                   dataKey="searchLatency"
                   color="#ef4444"
-                  icon={<Zap className="h-4 w-4" />}
+                  icon={<Zap className="h-3.5 w-3.5" />}
                 />
+                </div>
               </div>
             </section>
 
-            {/* Tables - stacked vertically */}
-            <section className="grid grid-cols-1 gap-4 min-h-0 flex-1">
-              <div className="flex flex-col rounded-lg border border-gray-300 bg-white shadow-lg dark:bg-gray-800 dark:border-gray-600">
-                <div className="flex-1 p-4">
+            {/* Tables */}
+            <section className="mt-2 flex flex-col gap-2 min-h-0 flex-1 overflow-hidden">
+              <div className="flex flex-col flex-1 min-h-0 rounded-lg border border-gray-300 bg-white shadow dark:bg-gray-800 dark:border-gray-600 overflow-hidden">
+                <div className="flex-1 min-h-0 overflow-hidden p-1">
                   <IndexTable
                     data={performanceData.indices}
                     indexStats={snapshot?.indexStats}
@@ -480,8 +449,8 @@ export default function App() {
                 </div>
               </div>
 
-              <div className="flex flex-col rounded-lg border border-gray-300 bg-white shadow-lg dark:bg-gray-800 dark:border-gray-600">
-                <div className="flex-1 p-4">
+              <div className="flex flex-col flex-1 min-h-0 rounded-lg border border-gray-300 bg-white shadow dark:bg-gray-800 dark:border-gray-600 overflow-hidden">
+                <div className="flex-1 min-h-0 overflow-hidden p-1">
                   {snapshot?.nodeStats && (
                     <NodeTable nodeStats={snapshot.nodeStats} nodes={snapshot.nodes} />
                   )}

@@ -230,8 +230,8 @@ const IndexTable = memo<IndexTableProps>(({
 
   return (
     <div className="flex flex-col h-full">
-      <div className="mb-2 flex items-center justify-between">
-        <div className="flex items-center gap-2">
+      <div className="mb-1 flex items-center justify-between">
+        <div className="flex items-center gap-2 ml-2">
           <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100">
             Index Statistics
           </h3>
@@ -258,29 +258,34 @@ const IndexTable = memo<IndexTableProps>(({
             </div>
           </InfoPopup>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           {/* Search Input */}
           <div className="relative">
-            <Search className="absolute left-2 top-1/2 transform -translate-y-1/2 h-3.5 w-3.5 text-gray-400" />
+            <Search className="absolute left-1.5 top-1/2 transform -translate-y-1/2 h-3 w-3 text-gray-400" />
             <input
               type="text"
               placeholder="Search indices..."
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
-              className="pl-8 pr-8 py-1.5 text-xs border border-gray-300 rounded-lg bg-white dark:bg-gray-700 dark:border-gray-600 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 w-40"
+              className="pl-6 pr-6 py-1 text-xs border border-gray-300 rounded-md bg-white dark:bg-gray-700 dark:border-gray-600 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 w-36"
             />
             {searchTerm && (
               <button
                 onClick={() => setSearchTerm('')}
-                className="absolute right-2 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+                className="absolute right-1.5 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
               >
-                <X className="h-3.5 w-3.5" />
+                <X className="h-3 w-3" />
               </button>
             )}
           </div>
-          <span className="text-xs text-gray-600 dark:text-gray-300">
-            {filteredData.length} of {processedData.length} indices
-          </span>
+          <Pagination
+            currentPage={currentPage}
+            totalPages={totalPages}
+            totalItems={sortedData.length}
+            pageSize={PAGE_SIZE}
+            onPageChange={setCurrentPage}
+            inline
+          />
         </div>
       </div>
 
@@ -394,13 +399,6 @@ const IndexTable = memo<IndexTableProps>(({
           emptyMessage="No indices found"
         />
         </div>
-        <Pagination
-          currentPage={currentPage}
-          totalPages={totalPages}
-          totalItems={sortedData.length}
-          pageSize={PAGE_SIZE}
-          onPageChange={setCurrentPage}
-        />
       </div>
     </div>
   );

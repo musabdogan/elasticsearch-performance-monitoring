@@ -6,8 +6,6 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build && cp -r public/* dist/",
-    "build:chrome": "npm run build && node scripts/build-chrome.cjs",
-    "icons:store": "node scripts/resize-store-icon.mjs",
     "preview": "vite preview",
     "lint": "eslint src --ext ts,tsx"
   },

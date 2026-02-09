@@ -44,7 +44,7 @@ export const DEFAULT_ALERT_RULES: AlertRule[] = [
   {
     id: 'high-cpu-usage',
     name: 'Critical CPU Usage',
-    description: 'CPU usage is critically high - performance severely impacted',
+    description: 'CPU usage is critically high - performance can be impacted',
     severity: 'critical',
     threshold: 90,
     unit: '%',
@@ -57,7 +57,7 @@ export const DEFAULT_ALERT_RULES: AlertRule[] = [
   {
     id: 'slow-search-critical',
     name: 'Slow Search Performance',
-    description: 'Search latency is critically high - user experience severely impacted',
+    description: 'Search latency is critically high - user experience can be impacted',
     severity: 'critical',
     threshold: 1000,
     unit: 'ms',

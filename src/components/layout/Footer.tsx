@@ -2,7 +2,7 @@ import { Github, Globe, MessageCircle } from 'lucide-react';
 
 export function Footer() {
   return (
-    <footer className="flex-shrink-0 border-t border-gray-200 bg-white px-4 py-3 shadow-sm dark:border-gray-700 dark:bg-gray-800">
+    <footer className="flex-shrink-0 border-t border-gray-200 bg-white px-3 py-2 shadow-sm dark:border-gray-700 dark:bg-gray-800">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           <span className="text-xs text-gray-600 dark:text-gray-400">
@@ -24,9 +24,9 @@ export function Footer() {
             title="LinkedIn"
           >
             <img 
-              src="/linkedin-icon.png" 
+              src="/icons/linkedin-icon.png" 
               alt="LinkedIn" 
-              className="h-4 w-4"
+              className="h-4 w-4 dark:invert"
             />
           </a>
         </div>

@@ -64,37 +64,34 @@ const MetricCard = memo<MetricCardProps>(({
   const trend = getTrend();
 
   return (
-    <div className="rounded-lg bg-gradient-to-br from-white to-gray-50 p-3 shadow-lg dark:from-gray-800 dark:to-gray-900/50 dark:border dark:border-gray-700">
-      <div className="flex items-center justify-between mb-2">
-        <div className="flex items-center gap-2">
-          {icon && <div className="text-gray-600 dark:text-gray-400">{icon}</div>}
-          <h3 className="text-xs font-semibold text-gray-700 dark:text-gray-300">
+    <div className="rounded-md bg-gradient-to-br from-white to-gray-50 p-2 shadow dark:from-gray-800 dark:to-gray-900/50 dark:border dark:border-gray-700">
+      <div className="flex items-center justify-between mb-1">
+        <div className="flex items-center gap-1.5">
+          {icon && <div className="text-gray-600 dark:text-gray-400 shrink-0">{icon}</div>}
+          <h3 className="text-[11px] font-semibold text-gray-700 dark:text-gray-300 truncate">
             {title}
           </h3>
         </div>
         {trend && (
-          <div className={`flex items-center gap-1 text-xs ${
-            trend.isPositive ? 'text-green-600' : 'text-red-600'
-          }`}>
+          <div className={`flex items-center gap-0.5 text-[11px] shrink-0 ${trend.isPositive ? 'text-green-600' : 'text-red-600'}`}>
             <span>{trend.isPositive ? '↑' : '↓'}</span>
             <span>{trend.value.toFixed(1)}%</span>
           </div>
         )}
       </div>
-
-      <div className="flex items-end justify-between">
-        <div>
-          <div className="text-2xl font-bold text-gray-900 dark:text-gray-100 flex items-baseline gap-1">
+      <div className="flex items-end justify-between gap-1">
+        <div className="min-w-0">
+          <div className="text-lg font-bold text-gray-900 dark:text-gray-100 flex items-baseline gap-1 flex-wrap">
             <span>{formatValue(value)}</span>
-            <span className="text-sm text-gray-500 dark:text-gray-400">{getUnit()}</span>
+            <span className="text-xs text-gray-500 dark:text-gray-400">{getUnit()}</span>
           </div>
         </div>
-        <div className="w-16 h-8">
+        <div className="w-12 h-6 shrink-0">
           <SparklineChart
             data={data}
             dataKey={dataKey}
             color={color}
-            height={32}
+            height={24}
           />
         </div>
       </div>

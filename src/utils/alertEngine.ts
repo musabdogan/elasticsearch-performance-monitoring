@@ -6,7 +6,7 @@ import type {
 } from '../types/alerts';
 import type { MonitoringSnapshot } from '../types/api';
 import { DEFAULT_ALERT_RULES, DEFAULT_ALERT_SETTINGS, ALERT_STORAGE_KEYS } from '../config/alerts';
-import { parseDiskSizeToBytes } from '@/utils/format';
+import { parseDiskSizeToBytes, formatAlertValue } from '@/utils/format';
 
 export class AlertEngine {
   private rules: AlertRule[] = [];
@@ -334,7 +334,7 @@ export class AlertEngine {
 
     if (Notification.permission === 'granted') {
       new Notification(`Elasticsearch Alert: ${alert.ruleName}`, {
-        body: `${alert.description}\nCurrent: ${alert.currentValue}${alert.unit}`,
+        body: `${alert.description}\nCurrent: ${formatAlertValue(alert.currentValue as number, alert.unit)}`,
         icon: '/icons/icon48.png',
         tag: `elasticsearch-alert-${alert.ruleId}`,
         requireInteraction: alert.severity === 'critical'

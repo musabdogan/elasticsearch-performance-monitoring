@@ -92,6 +92,13 @@ export class PerformanceTracker {
     return metrics;
   }
 
+  /** Minimum time between snapshots (seconds) to trust rate calculations; avoids huge spikes on cluster switch or double-fetch */
+  private readonly MIN_TIME_DIFF_SECONDS = 1;
+  /** Sanity cap: rates above this are considered invalid (e.g. from mixed cluster data) */
+  private readonly MAX_RATE_PER_SEC = 50_000_000;
+  /** Sanity cap: latencies above this (ms) are capped to avoid display glitches */
+  private readonly MAX_LATENCY_MS = 300_000;
+
   /**
    * Calculate current performance metrics based on history
    */
@@ -111,12 +118,12 @@ export class PerformanceTracker {
 
     const timeDiffSeconds = (current.timestamp - previous.timestamp) / 1000;
 
-    if (timeDiffSeconds <= 0) {
+    if (timeDiffSeconds <= 0 || timeDiffSeconds < this.MIN_TIME_DIFF_SECONDS) {
       return {
         indexingRate: 0,
         searchRate: 0,
-        indexLatency: current.totalIndexTimeMs / Math.max(current.totalIndexingOps, 1),
-        searchLatency: current.totalSearchTimeMs / Math.max(current.totalSearchOps, 1)
+        indexLatency: 0,
+        searchLatency: 0
       };
     }
 
@@ -126,14 +133,23 @@ export class PerformanceTracker {
     const searchTimeDiffMs = Math.max(0, current.totalSearchTimeMs - previous.totalSearchTimeMs);
 
     // Rate: delta ops / time. Latency: delta time / delta ops (recent interval), not cumulative average
-    const indexLatency =
+    let indexLatency =
       indexingOpsDiff > 0 ? indexTimeDiffMs / indexingOpsDiff : 0;
-    const searchLatency =
+    let searchLatency =
       searchOpsDiff > 0 ? searchTimeDiffMs / searchOpsDiff : 0;
 
+    let indexingRate = Math.max(0, indexingOpsDiff / timeDiffSeconds);
+    let searchRate = Math.max(0, searchOpsDiff / timeDiffSeconds);
+
+    // Sanity caps: ignore impossible rates (e.g. from cluster switch mixing data)
+    if (indexingRate > this.MAX_RATE_PER_SEC) indexingRate = 0;
+    if (searchRate > this.MAX_RATE_PER_SEC) searchRate = 0;
+    if (indexLatency > this.MAX_LATENCY_MS) indexLatency = this.MAX_LATENCY_MS;
+    if (searchLatency > this.MAX_LATENCY_MS) searchLatency = this.MAX_LATENCY_MS;
+
     return {
-      indexingRate: Math.max(0, indexingOpsDiff / timeDiffSeconds),
-      searchRate: Math.max(0, searchOpsDiff / timeDiffSeconds),
+      indexingRate,
+      searchRate,
       indexLatency,
       searchLatency
     };

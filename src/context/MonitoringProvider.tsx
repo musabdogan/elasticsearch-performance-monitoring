@@ -36,6 +36,7 @@ import type {
 import type { ClusterConnection, CreateClusterInput } from '@/types/app';
 import type { AlertInstance, AlertRule, AlertSettings, AlertStats } from '../types/alerts';
 import { getStoredValue, setStoredValue } from '@/utils/storage';
+import { formatAlertValue } from '@/utils/format';
 
 const POLL_STORAGE_KEY = 'eum/poll-interval';
 const CLUSTERS_STORAGE_KEY = 'eum/clusters';
@@ -253,7 +254,7 @@ export function MonitoringProvider({ children }: { children: ReactNode }) {
         newAlerts.forEach(alert => {
           if (alert.severity === 'critical') {
             toast.error(`Critical Alert: ${alert.ruleName}`, {
-              description: `${alert.description} (${alert.currentValue}${alert.unit})`,
+              description: `${alert.description} (${formatAlertValue(alert.currentValue as number, alert.unit)})`,
               duration: 10000
             });
           }

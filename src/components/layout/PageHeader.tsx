@@ -31,13 +31,13 @@ export function PageHeader({ onOpenAlerts, onOpenWelcome, unseenAlertCount = 0, 
   const criticalAlerts = unseenCriticalCount;
 
   return (
-    <header className="flex-shrink-0 border-b border-gray-200 bg-white px-3 py-2 shadow-sm transition-colors duration-300 dark:border-gray-700 dark:bg-gray-800">
+    <header className="flex-shrink-0 border-b border-gray-200 bg-white px-3 py-1.5 shadow-sm transition-colors duration-300 dark:border-gray-700 dark:bg-gray-800">
       <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2">
         <div className="flex items-center gap-2 flex-shrink-0">
           <img 
-            src="/searchali_logo.png" 
+            src="/icons/searchali_logo.png" 
             alt="Searchali" 
-            className="h-6 w-auto"
+            className="h-5 w-auto"
           />
           <span className="text-xs font-semibold text-red-600 dark:text-red-400">
             searchali.com
