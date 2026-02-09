@@ -30,3 +30,6 @@ Thumbs.db
 chrome-extensions/
 *.zip
 
+# Screenshots (local/store only, do not commit)
+public/screenshots/
+
