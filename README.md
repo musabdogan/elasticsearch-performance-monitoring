@@ -5,7 +5,7 @@ Real-time performance monitoring dashboard for Elasticsearch clusters. Track ind
 
 ## 🚀 Install from Chrome Web Store
 
-**[Install Elasticsearch Performance Monitoring](link here)**
+**[Install Elasticsearch Performance Monitoring](https://chromewebstore.google.com/detail/elasticsearch-performance/eoigdegnoepbfnlijibjhdhmepednmdi)**
 
 ## Features
 
@@ -36,7 +36,7 @@ Real-time performance monitoring dashboard for Elasticsearch clusters. Track ind
 
 ### Chrome Web Store (Recommended)
 
-Install directly from the [Chrome Web Store](link here) - no build required!
+Install directly from the [Chrome Web Store](https://chromewebstore.google.com/detail/elasticsearch-performance/eoigdegnoepbfnlijibjhdhmepednmdi) - no build required!
 
 ### Development Mode
 
