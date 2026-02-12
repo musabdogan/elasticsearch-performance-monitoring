@@ -1,13 +1,11 @@
 import { apiConfig, apiHeaders } from '@/config/api';
 import type {
   ClusterHealth,
-  ClusterSettings,
   IndexInfo,
   IndexStats,
   NodeInfo,
   NodeStats,
-  PerformanceMetrics,
-  RecoveryRow
+  PerformanceMetrics
 } from '@/types/api';
 import type { ClusterConnection } from '@/types/app';
 
@@ -85,76 +83,6 @@ async function request<T>(
     }
     throw error;
   }
-}
-
-/**
- * Make a POST/PUT request to Elasticsearch
- */
-async function requestWithBody<T>(
-  path: string,
-  cluster: ClusterConnection,
-  method: 'POST' | 'PUT' = 'POST',
-  body?: unknown
-): Promise<T> {
-  const url = `${cluster.baseUrl}${path}`;
-  const headers = buildHeaders(cluster);
-  
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), apiConfig.requestTimeoutMs);
-  
-  try {
-    const response = await fetch(url, {
-      method,
-      headers,
-      body: body ? JSON.stringify(body) : undefined,
-      signal: controller.signal
-    });
-    
-    clearTimeout(timeout);
-    
-    if (!response.ok) {
-      throw new Error(`Elasticsearch ${response.status} ${response.statusText}`);
-    }
-    
-    return await response.json() as T;
-  } catch (error) {
-    clearTimeout(timeout);
-    if (error instanceof Error && error.name === 'AbortError') {
-      throw new Error('Request timeout');
-    }
-    throw error;
-  }
-}
-
-export async function getRecovery(cluster: ClusterConnection): Promise<RecoveryRow[]> {
-  const data = await request<
-    Array<{
-      index: string;
-      shard: string;
-      time: string;
-      source_node: string;
-      target_node: string;
-      target: string;
-      fp: string;
-      bp: string;
-      stage: string;
-      translog: string;
-      bytes_percent: string;
-    }>
-  >('recovery', cluster);
-  
-  return data.map((row) => ({
-    index: row.index,
-    shard: row.shard,
-    time: row.time,
-    sourceNode: row.source_node,
-    targetNode: row.target_node,
-    target: row.target || row.target_node || '',
-    filesPercent: row.fp || '0%',
-    bytesPercent: row.bytes_percent || row.bp || '0%',
-    stage: row.stage,
-    translog: row.translog
-  }));
 }
 
 export async function getClusterHealth(cluster: ClusterConnection, signal?: AbortSignal | null): Promise<ClusterHealth> {
@@ -235,47 +163,6 @@ export async function getNodes(cluster: ClusterConnection, signal?: AbortSignal 
   });
 }
 
-export async function getClusterSettings(cluster: ClusterConnection): Promise<ClusterSettings> {
-  return request<ClusterSettings>('clusterSettings', cluster);
-}
-
-export async function flushCluster(cluster: ClusterConnection): Promise<{ flushed: boolean }> {
-  await requestWithBody(apiConfig.endpoints.flush, cluster, 'POST');
-  return { flushed: true };
-}
-
-export async function disableShardAllocation(cluster: ClusterConnection): Promise<void> {
-  await requestWithBody('/_cluster/settings', cluster, 'PUT', {
-    persistent: {
-      'cluster.routing.allocation.enable': 'primaries'
-    }
-  });
-}
-
-export async function stopShardRebalance(cluster: ClusterConnection): Promise<void> {
-  await requestWithBody('/_cluster/settings', cluster, 'PUT', {
-    persistent: {
-      'cluster.routing.rebalance.enable': 'none'
-    }
-  });
-}
-
-export async function enableShardAllocation(cluster: ClusterConnection): Promise<void> {
-  await requestWithBody('/_cluster/settings', cluster, 'PUT', {
-    persistent: {
-      'cluster.routing.allocation.enable': 'all'
-    }
-  });
-}
-
-export async function enableShardRebalance(cluster: ClusterConnection): Promise<void> {
-  await requestWithBody('/_cluster/settings', cluster, 'PUT', {
-    persistent: {
-      'cluster.routing.rebalance.enable': 'all'
-    }
-  });
-}
-
 // Performance monitoring functions
 export async function getNodeStats(cluster: ClusterConnection, signal?: AbortSignal | null): Promise<NodeStats> {
   return request<NodeStats>('nodeStats', cluster, 1, signal);
@@ -332,14 +219,4 @@ export function calculatePerformanceMetrics(nodeStats: NodeStats): PerformanceMe
   };
 }
 
-export async function updateRecoverySetting(
-  cluster: ClusterConnection,
-  value: number
-): Promise<void> {
-  await requestWithBody('/_cluster/settings', cluster, 'PUT', {
-    transient: {
-      'cluster.routing.allocation.node_initial_primaries_recoveries': value
-    }
-  });
-}
 

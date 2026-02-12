@@ -14,12 +14,7 @@ export const apiConfig = {
 
     // Cluster info endpoints
     clusterHealth: '/_cluster/health?filter_path=cluster_name,status,number_of_nodes,active_shards',
-    nodes: '/_cat/nodes?v&format=json&h=node.role,name,ip&s=node.role,ip',
-    
-    // Utility endpoints (still used by some functions)
-    recovery: '/_cat/recovery?v&format=json&h=index,shard,time,source_node,target_node,target,fp,bp,stage,translog,bytes_percent&s=ty:desc,index,bp:desc&active_only',
-    clusterSettings: '/_cluster/settings?flat_settings',
-    flush: '/_flush'
+    nodes: '/_cat/nodes?v&format=json&h=node.role,name,ip&s=node.role,ip'
   }
 } as const;
 

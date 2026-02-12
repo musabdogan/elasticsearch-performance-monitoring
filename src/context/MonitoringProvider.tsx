@@ -16,12 +16,7 @@ import {
   getIndices,
   getClusterHealth,
   getNodes,
-  checkClusterHealth,
-  flushCluster,
-  disableShardAllocation,
-  stopShardRebalance,
-  enableShardAllocation,
-  enableShardRebalance
+  checkClusterHealth
 } from '@/services/elasticsearch';
 import { PerformanceTracker } from '@/utils/performanceTracker';
 import { alertEngine } from '@/utils/alertEngine';
@@ -586,81 +581,6 @@ export function MonitoringProvider({ children }: { children: ReactNode }) {
     [clusters, activeClusterLabel]
   );
   
-  const handleFlushCluster = useCallback(async () => {
-    if (!activeCluster) {
-      toast.error('No active cluster', { description: 'Please select a cluster first.' });
-      return;
-    }
-    
-    try {
-      await flushCluster(activeCluster);
-      toast.success('Flush completed', { description: 'Cluster has been flushed successfully.' });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Flush failed';
-      toast.error('Flush failed', { description: message });
-    }
-  }, [activeCluster]);
-  
-  const handleDisableShardAllocation = useCallback(async () => {
-    if (!activeCluster) {
-      toast.error('No active cluster', { description: 'Please select a cluster first.' });
-      return;
-    }
-    try {
-      await disableShardAllocation(activeCluster);
-      toast.success('Shard allocation disabled', { description: 'Primary shard allocation has been disabled.' });
-      fetchAll();
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Failed to disable shard allocation';
-      toast.error('Failed', { description: message });
-    }
-  }, [activeCluster, fetchAll]);
-  
-  const handleStopShardRebalance = useCallback(async () => {
-    if (!activeCluster) {
-      toast.error('No active cluster', { description: 'Please select a cluster first.' });
-      return;
-    }
-    try {
-      await stopShardRebalance(activeCluster);
-      toast.success('Shard rebalance stopped', { description: 'Shard rebalancing has been disabled.' });
-      fetchAll();
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Failed to stop shard rebalance';
-      toast.error('Failed', { description: message });
-    }
-  }, [activeCluster, fetchAll]);
-  
-  const handleEnableShardAllocation = useCallback(async () => {
-    if (!activeCluster) {
-      toast.error('No active cluster', { description: 'Please select a cluster first.' });
-      return;
-    }
-    try {
-      await enableShardAllocation(activeCluster);
-      toast.success('Shard allocation enabled', { description: 'Shard allocation has been enabled for all shards.' });
-      fetchAll();
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Failed to enable shard allocation';
-      toast.error('Failed', { description: message });
-    }
-  }, [activeCluster, fetchAll]);
-  
-  const handleEnableShardRebalance = useCallback(async () => {
-    if (!activeCluster) {
-      toast.error('No active cluster', { description: 'Please select a cluster first.' });
-      return;
-    }
-    try {
-      await enableShardRebalance(activeCluster);
-      toast.success('Shard rebalance enabled', { description: 'Shard rebalancing has been enabled.' });
-      fetchAll();
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Failed to enable shard rebalance';
-      toast.error('Failed', { description: message });
-    }
-  }, [activeCluster, fetchAll]);
-  
   const value = useMemo<MonitoringContextValue>(() => {
     const statusSummary: Record<ClusterStatus, number> = {
       green: 0,
@@ -772,11 +692,6 @@ export function MonitoringProvider({ children }: { children: ReactNode }) {
     addCluster,
     updateCluster,
     deleteCluster,
-    handleFlushCluster,
-    handleDisableShardAllocation,
-    handleStopShardRebalance,
-    handleEnableShardAllocation,
-    handleEnableShardRebalance,
     alerts,
     alertStats,
     alertRules,

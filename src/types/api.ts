@@ -2,19 +2,6 @@ export type ClusterStatus = 'green' | 'yellow' | 'red' | 'unknown';
 
 export type Maybe<T> = T | null;
 
-export interface RecoveryRow {
-  index: string;
-  shard: string;
-  time: string;
-  sourceNode: string;
-  targetNode: string;
-  target: string;
-  filesPercent: string;
-  bytesPercent: string;
-  stage: string;
-  translog: string;
-}
-
 export interface ClusterHealth {
   cluster_name: string;
   status: ClusterStatus;
@@ -41,12 +28,6 @@ export interface NodeInfo {
   version?: string;
   uptime?: string;
   tier?: string;
-}
-
-export interface ClusterSettings {
-  persistent: Record<string, string>;
-  transient: Record<string, string>;
-  defaults?: Record<string, string>;
 }
 
 export interface CatHealthRow {
@@ -215,7 +196,7 @@ export interface MonitoringSnapshot {
   // Cluster info
   health: ClusterHealth;
   nodes: NodeInfo[];
-  settings: ClusterSettings;
+  settings: { persistent: Record<string, string>; transient: Record<string, string> };
   fetchedAt: string;
 }
 
