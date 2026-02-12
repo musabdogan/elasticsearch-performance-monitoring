@@ -68,7 +68,7 @@ const AlertManagement = memo<AlertManagementProps>(({
   const [activeTab, setActiveTab] = useState<TabType>('alerts');
   const [tempSettings, setTempSettings] = useState<AlertSettings>(settings);
 
-  // ESC tuşu ile modal/panel kapatma
+  // Close modal/panel on ESC key
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape' && isOpen) {

@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc && vite build && cp -r public/* dist/",
+    "version:sync": "node scripts/sync-version.cjs",
+    "build": "npm run version:sync && tsc && vite build && cp -r public/* dist/",
     "preview": "vite preview",
     "lint": "eslint src --ext ts,tsx"
   },

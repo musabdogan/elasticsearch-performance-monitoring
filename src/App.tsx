@@ -104,8 +104,6 @@ export default function App() {
     performanceMetrics,
     pollInterval,
     error,
-    connectionFailed,
-    refresh,
     retryConnection,
     activeCluster,
     clusters,
@@ -262,37 +260,19 @@ export default function App() {
         {/* Left content area - min-h-0 so it stays within viewport and only this area scrolls */}
         <div className="flex-1 min-h-0 overflow-y-auto flex flex-col gap-4 px-4 pt-2 pb-0.5">
 
-        {error && !activeCluster ? (
+        {error ? (
           <div className="flex-1 flex items-center justify-center p-4">
-            <div className="rounded-lg border border-gray-300 bg-white p-4 text-center shadow-lg dark:border-gray-700 dark:bg-gray-800">
-              <p className="text-sm text-gray-700 dark:text-gray-300">{error}</p>
-              <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">
-                Use the cluster selector in the header to add your first cluster.
-              </p>
-            </div>
-          </div>
-        ) : connectionFailed && error ? (
-          <div className="flex-1 flex items-center justify-center p-4">
-            <div className="rounded-lg border border-red-300 bg-red-50 p-4 text-center shadow-lg dark:border-red-700 dark:bg-red-900/20">
-              <p className="text-sm font-semibold text-red-800 dark:text-red-200">{error}</p>
-              <button
-                type="button"
-                onClick={retryConnection}
-                className="mt-3 rounded bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
-              >
-                Reload
-              </button>
-            </div>
-          </div>
-        ) : error ? (
-          <div className="flex-1 flex items-center justify-center p-4">
-            <ErrorState message={error} onRetry={refresh} />
+            <ErrorState
+              message={error}
+              onRetry={retryConnection}
+              actionLabel="Try again"
+            />
           </div>
         ) : null}
 
         {clusters.length === 0 || showWelcomePage ? (
           <WelcomeScreen onClose={showWelcomePage ? () => setShowWelcomePage(false) : undefined} />
-        ) : snapshot && !connectionFailed && performanceData ? (
+        ) : snapshot && !error && performanceData ? (
         <>
           <div className="flex-1 min-h-0 flex flex-col gap-0 px-0 pt-0 pb-0 overflow-hidden">
             {/* Cluster Overview - compact for one-page */}

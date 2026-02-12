@@ -153,7 +153,7 @@ const NodeTable = memo<NodeTableProps>(({ nodeStats, nodes = [], loading = false
       return [...filteredData].sort((a, b) => {
         const primarySort = b.indexingRate - a.indexingRate;
         if (primarySort === 0) {
-          // İkincil sıralama: node role'e göre
+          // Secondary sort: by node role
           const roleSort = a.nodeRole.localeCompare(b.nodeRole);
           if (roleSort === 0) {
             // Tertiary sort: by IP

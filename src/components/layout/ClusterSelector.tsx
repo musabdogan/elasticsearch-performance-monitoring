@@ -1,4 +1,4 @@
-import { ChevronDown, Edit2, Plus, Server, Trash2, Check, Eye, EyeOff, Copy } from 'lucide-react';
+import { ChevronDown, Edit2, GripVertical, Plus, Server, Trash2, Check, Eye, EyeOff, Copy } from 'lucide-react';
 import { useState, useRef, useEffect } from 'react';
 import { useMonitoring } from '@/context/MonitoringProvider';
 import type { ClusterConnection, CreateClusterInput } from '@/types/app';
@@ -17,7 +17,8 @@ export function ClusterSelector() {
     setActiveCluster,
     addCluster,
     updateCluster,
-    deleteCluster
+    deleteCluster,
+    reorderClusters
   } = useMonitoring();
   const [form, setForm] = useState<CreateClusterInput>(initialForm);
   const [showDropdown, setShowDropdown] = useState(false);
@@ -26,6 +27,8 @@ export function ClusterSelector() {
   const [showPassword, setShowPassword] = useState(false);
   const [isAddingNew, setIsAddingNew] = useState(false);
   const [copiedCluster, setCopiedCluster] = useState<string | null>(null);
+  const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
+  const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
   const handleClose = () => {
@@ -187,15 +190,67 @@ export function ClusterSelector() {
                   {/* Cluster List */}
                   {clusters.length > 0 && (
                     <div className="max-h-48 overflow-y-auto space-y-1">
-                      {clusters.map((cluster) => (
+                      {clusters.map((cluster, index) => {
+                        const isDragging = draggedIndex === index;
+                        const isDropTarget = dragOverIndex === index && draggedIndex !== null;
+                        const handleDragStart = (e: React.DragEvent) => {
+                          e.stopPropagation();
+                          e.dataTransfer.effectAllowed = 'move';
+                          e.dataTransfer.setData('text/plain', String(index));
+                          e.dataTransfer.setData('application/json', JSON.stringify({ index }));
+                          setDraggedIndex(index);
+                        };
+                        const handleDragEnd = () => {
+                          setDraggedIndex(null);
+                          setDragOverIndex(null);
+                        };
+                        const handleDragOver = (e: React.DragEvent) => {
+                          e.preventDefault();
+                          e.dataTransfer.dropEffect = 'move';
+                          if (draggedIndex !== null && draggedIndex !== index) setDragOverIndex(index);
+                        };
+                        const handleDragLeave = () => setDragOverIndex(null);
+                        const handleDrop = (e: React.DragEvent) => {
+                          e.preventDefault();
+                          const fromIndex = draggedIndex;
+                          if (fromIndex === null || fromIndex === index) {
+                            setDraggedIndex(null);
+                            setDragOverIndex(null);
+                            return;
+                          }
+                          const next = [...clusters];
+                          const [removed] = next.splice(fromIndex, 1);
+                          next.splice(index, 0, removed);
+                          reorderClusters(next);
+                          setDraggedIndex(null);
+                          setDragOverIndex(null);
+                        };
+                        return (
                         <div
                           key={cluster.label}
+                          draggable={false}
+                          onDragOver={handleDragOver}
+                          onDragLeave={handleDragLeave}
+                          onDrop={handleDrop}
                           className={`group flex items-center justify-between rounded-lg px-3 py-2 transition-colors ${
+                            isDragging ? 'opacity-50' : ''
+                          } ${
+                            isDropTarget ? 'ring-2 ring-blue-400 ring-inset dark:ring-blue-400' : ''
+                          } ${
                             activeCluster?.label === cluster.label
                               ? 'bg-blue-50 dark:bg-blue-900/30'
                               : 'hover:bg-gray-50 dark:hover:bg-gray-700/50'
                           }`}
                         >
+                          <div
+                            draggable
+                            onDragStart={handleDragStart}
+                            onDragEnd={handleDragEnd}
+                            className="flex-shrink-0 cursor-grab active:cursor-grabbing rounded p-1 text-gray-400 hover:bg-gray-200 hover:text-gray-600 dark:hover:bg-gray-600 dark:hover:text-gray-300 touch-none"
+                            title="Drag to reorder"
+                          >
+                            <GripVertical className="h-3.5 w-3.5" />
+                          </div>
                           <button
                             type="button"
                             onClick={() => {
@@ -261,7 +316,8 @@ export function ClusterSelector() {
                             </button>
                           </div>
                         </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   )}
 

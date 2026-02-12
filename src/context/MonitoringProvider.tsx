@@ -69,6 +69,7 @@ type MonitoringContextValue = {
   addCluster: (input: CreateClusterInput) => void;
   updateCluster: (clusterLabel: string, input: CreateClusterInput) => void;
   deleteCluster: (clusterLabel: string) => void;
+  reorderClusters: (reordered: ClusterConnection[]) => void;
   // Alert management
   snoozeAlert: (alertId: string, minutes: number) => void;
   dismissAlert: (alertId: string) => void;
@@ -181,7 +182,7 @@ export function MonitoringProvider({ children }: { children: ReactNode }) {
     let controller: AbortController | null = null;
     try {
       if (!activeCluster) {
-        setError('Please add a cluster to start monitoring.');
+        setError(null);
         setLoading(false);
         setRefreshing(false);
         setConnectionFailed(false);
@@ -376,7 +377,7 @@ export function MonitoringProvider({ children }: { children: ReactNode }) {
     
     const timer = setTimeout(async () => {
       if (!activeCluster) {
-        setError('Please add a cluster to start monitoring.');
+        setError(null);
         setConnectionFailed(false);
         return;
       }
@@ -719,6 +720,7 @@ export function MonitoringProvider({ children }: { children: ReactNode }) {
       addCluster,
       updateCluster,
       deleteCluster,
+      reorderClusters: (reordered: ClusterConnection[]) => setClusters(reordered),
       // Alert system
       alerts,
       alertStats,

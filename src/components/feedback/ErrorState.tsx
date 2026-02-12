@@ -11,13 +11,14 @@ export function ErrorState({
   actionLabel = 'Try again',
   onRetry
 }: ErrorStateProps) {
-  // URL'yi mesajdan çıkar ve link yap
+  // Extract URL from message and render as link
   const urlRegex = /(https?:\/\/[^\s]+)/g;
   const parts = message.split(urlRegex);
 
+  const isLikelyNetworkOrSsl = /network|https:\/\//i.test(message);
   const renderMessage = () => {
     return parts.map((part, index) => {
-      if (urlRegex.test(part)) {
+      if (/^https?:\/\//.test(part)) {
         return (
           <a
             key={index}
@@ -39,6 +40,11 @@ export function ErrorState({
     <div className="flex flex-col items-center justify-center gap-3 rounded-2xl border border-rose-300 bg-rose-50 p-6 text-center text-rose-700 shadow-sm dark:border-rose-500/30 dark:bg-rose-500/10 dark:text-rose-200">
       <TriangleAlert className="h-6 w-6" />
       <p className="text-sm font-medium">{renderMessage()}</p>
+      {isLikelyNetworkOrSsl && (
+        <p className="text-xs text-rose-600/90 dark:text-rose-300/90">
+          When using HTTPS, make sure your browser trusts the cluster's SSL certificate.
+        </p>
+      )}
       {onRetry ? (
         <button
           type="button"
