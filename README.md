@@ -7,6 +7,12 @@ Real-time performance monitoring dashboard for Elasticsearch clusters. Track ind
 
 **[Install Elasticsearch Performance Monitoring](https://chromewebstore.google.com/detail/elasticsearch-performance/eoigdegnoepbfnlijibjhdhmepednmdi)**
 
+
+
+https://github.com/user-attachments/assets/c9e3951e-7faf-42bb-ac40-d2697339ab2f
+
+
+
 ## Features
 
 - **Real-time Performance Monitoring**: Live tracking of indexing/search rates and latencies
