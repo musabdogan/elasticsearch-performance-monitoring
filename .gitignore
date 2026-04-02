@@ -33,3 +33,13 @@ chrome-extensions/
 # Screenshots (local/store only, do not commit)
 public/screenshots/
 
+# Cursor / local editor settings
+.cursor/
+
+# Large source artifacts / media (do not commit)
+elasticsearch-openapi-source.json
+linkedin-post-pictures/
+
+# Local planning docs (keep docs/*.html for GitHub Pages)
+docs/*.md
+
