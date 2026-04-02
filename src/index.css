@@ -11,6 +11,9 @@
   --radius-pill: 999px;
   --shadow-card: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -2px rgba(0, 0, 0, 0.1);
   --shadow-card-dark: 0 4px 6px -1px rgba(0, 0, 0, 0.3), 0 2px 4px -2px rgba(0, 0, 0, 0.2);
+  /* Tab content typography – SINGLE SOURCE: change only here to resize all tab tables (Cluster, Nodes, Snapshots, Indexing & Search). Use .tab-content-value everywhere; do not use dense or hardcoded text-xs/text-sm in tab content. Table rows ~10% smaller than original 14px/12px. */
+  --tab-content-value: 0.7875rem; /* ~12.6px – table cells and metric values (14px −10%) */
+  --tab-content-label: 0.675rem;  /* ~10.8px – labels/secondary (12px −10%) */
   --color-primary: #1b2554;
   --color-primary-dark: #121e4e;
   --color-primary-light: #182352;
@@ -26,6 +29,7 @@
   --color-error: #ef4444;
   --color-info: #06b6d4;
   --color-grid-line: rgba(27, 37, 84, 0.08);
+  --tab-section-scroll-padding: 0.75rem;
 }
 
 html.dark,
@@ -40,6 +44,59 @@ html.dark,
   --color-primary-dark: #60a5fa;
   --color-primary-light: #1f2937;
   --shadow-card: var(--shadow-card-dark);
+}
+
+/* Tab content: .tab-content-value = same size for all tabs. Change --tab-content-value in :root above to resize globally. */
+.tab-content-value {
+  font-size: var(--tab-content-value);
+}
+.tab-content-label {
+  font-size: var(--tab-content-label);
+}
+
+/*
+ * Tab section layout (Cluster, Nodes, Indices, Templates, Snapshots, Indexing):
+ * .tab-section-card > .tab-section-header > .tab-section-body > .tab-section-scroll
+ * Collapsible + filters: .tab-section-header.tab-section-header-split — left: TabSectionExpandTrigger (fillHitArea=false when tools on same row), right: .tab-section-inline-tools.
+ */
+@layer components {
+  .tab-section-card {
+    @apply relative z-0 flex min-h-0 flex-col overflow-hidden rounded-lg border shadow;
+    border-color: var(--color-border);
+    background-color: var(--color-surface);
+  }
+  .tab-section-header {
+    @apply flex flex-shrink-0 flex-wrap items-center gap-2 p-2;
+  }
+  .tab-section-header-split {
+    @apply justify-between;
+  }
+  .tab-section-inline-tools {
+    @apply flex min-w-0 flex-1 flex-nowrap items-center justify-end gap-2 overflow-x-auto;
+  }
+  .tab-section-body {
+    @apply flex min-h-0 min-w-0 flex-col overflow-hidden border-t;
+    border-color: var(--color-border);
+  }
+  /* Default: capped height for stacked accordions on tab pages */
+  .tab-section-scroll {
+    /* Allow scroll chaining to the page when at edges (wheel + middle-mouse autoscroll UX). */
+    @apply min-h-0 min-w-0 max-h-[min(60vh,70dvh)] overflow-y-auto overflow-x-hidden overscroll-auto;
+    padding: var(--tab-section-scroll-padding);
+  }
+  .tab-section-scroll-flush {
+    padding: 0;
+  }
+  /* Fills remaining flex space (e.g. Indexing tab tables); no max-height cap */
+  .tab-section-scroll-fill {
+    /* Allow scroll chaining to the page when at edges. */
+    @apply min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-auto;
+    max-height: none;
+    padding: var(--tab-section-scroll-padding);
+  }
+  .tab-section-scroll-fill.tab-section-scroll-flush {
+    padding: 0;
+  }
 }
 
 *, *::before, *::after {
@@ -125,5 +182,64 @@ button, input, select, textarea {
 
 .animate-slide-in {
   animation: slideIn 0.2s ease-out;
+}
+
+@keyframes dropdownIn {
+  from {
+    opacity: 0;
+    transform: translateY(-8px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.animate-dropdown {
+  animation: dropdownIn 0.25s cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+/* Cluster summary bar: text scales with card height */
+.cluster-summary-card {
+  --cluster-card-h: 4.5rem;
+  font-size: clamp(0.55rem, calc(var(--cluster-card-h) * 0.42), 1.5rem);
+}
+.cluster-summary-card .cluster-card-value {
+  font-size: 1em;
+  line-height: 1.2;
+}
+.cluster-summary-card .cluster-card-label {
+  font-size: 0.58em;
+  line-height: 1.2;
+  opacity: 0.9;
+}
+.cluster-summary-card .cluster-card-usage {
+  font-size: 0.52em;
+  line-height: 1.2;
+}
+.cluster-summary-card .cluster-card-metric-name {
+  font-size: 0.58em;
+  line-height: 1.25;
+  font-weight: 600;
+}
+.cluster-summary-card .cluster-card-pct {
+  font-size: 0.72em;
+  line-height: 1.25;
+  font-weight: 700;
+}
+.cluster-metric-card .cluster-card-usage {
+  font-size: 0.54em;
+  line-height: 1.3;
+  font-weight: 500;
+}
+
+/* Left label: large, readable */
+.cluster-metric-card .cluster-metric-label-wrap {
+  min-width: 2.5rem;
+}
+.cluster-metric-card .cluster-metric-label {
+  font-size: 0.85em;
+  line-height: 1.15;
+  white-space: nowrap;
 }
 

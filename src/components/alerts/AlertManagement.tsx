@@ -11,6 +11,7 @@ import {
   Check
 } from 'lucide-react';
 import AlertItem from './AlertItem';
+import AlertDetailModal from './AlertDetailModal';
 import type { 
   AlertInstance, 
   AlertSettings,
@@ -67,11 +68,12 @@ const AlertManagement = memo<AlertManagementProps>(({
 }) => {
   const [activeTab, setActiveTab] = useState<TabType>('alerts');
   const [tempSettings, setTempSettings] = useState<AlertSettings>(settings);
+  const [selectedAlert, setSelectedAlert] = useState<AlertInstance | null>(null);
 
-  // Close modal/panel on ESC key
+  // Close panel on ESC only when alert detail modal is not open; otherwise modal closes first
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape' && isOpen) {
+      if (event.key === 'Escape' && isOpen && !selectedAlert) {
         onClose();
       }
     };
@@ -80,7 +82,16 @@ const AlertManagement = memo<AlertManagementProps>(({
       document.addEventListener('keydown', handleKeyDown);
       return () => document.removeEventListener('keydown', handleKeyDown);
     }
-  }, [isOpen, onClose]);
+  }, [isOpen, onClose, selectedAlert]);
+
+  // Keep selectedAlert in sync with history so modal shows latest (e.g. resolvedAt when alert is resolved)
+  useEffect(() => {
+    if (!selectedAlert || !history.length) return;
+    const fromHistory = history.find((a) => a.id === selectedAlert.id);
+    if (fromHistory && fromHistory !== selectedAlert) {
+      setSelectedAlert(fromHistory);
+    }
+  }, [history]);
 
   if (!isOpen) return null;
 
@@ -102,7 +113,7 @@ const AlertManagement = memo<AlertManagementProps>(({
     const spacingClass = isPanel ? 'space-y-3' : 'space-y-4';
     const textSizeClass = isPanel ? 'text-base' : 'text-lg';
     
-    // Single list: cluster-filtered, one alert per rule (longest duration wins)
+    // Single list: cluster-filtered, one alert per rule — prefer most recent state so resolved alerts show "Solved"
     const filteredByCluster = clusterName 
       ? history.filter(alert => alert.clusterName === clusterName)
       : history;
@@ -110,12 +121,12 @@ const AlertManagement = memo<AlertManagementProps>(({
     for (const alert of filteredByCluster) {
       const key = alert.ruleId;
       const existing = byRule.get(key);
+      const alertLastAt = new Date(alert.resolvedAt || alert.triggeredAt).getTime();
       if (!existing) {
         byRule.set(key, alert);
       } else {
-        const existingStart = existing.firstTriggeredAt || existing.triggeredAt;
-        const currentStart = alert.firstTriggeredAt || alert.triggeredAt;
-        if (currentStart < existingStart) byRule.set(key, alert);
+        const existingLastAt = new Date(existing.resolvedAt || existing.triggeredAt).getTime();
+        if (alertLastAt > existingLastAt) byRule.set(key, alert);
       }
     }
     const sortedAlerts = Array.from(byRule.values()).sort((a, b) => {
@@ -155,7 +166,7 @@ const AlertManagement = memo<AlertManagementProps>(({
                 </div>
               ) : (
                 sortedAlerts.slice(0, 50).map(alert => (
-                  <AlertItem key={alert.id} alert={alert} compact={isPanel} />
+                  <AlertItem key={alert.id} alert={alert} compact={isPanel} onClick={setSelectedAlert} />
                 ))
               )}
             </div>
@@ -343,6 +354,7 @@ const AlertManagement = memo<AlertManagementProps>(({
   // Panel mode - no modal wrapper
   if (isPanel) {
     return (
+      <>
       <div className="h-full flex flex-col">
         {/* Header */}
         <div className="flex items-center justify-between p-4 border-b border-gray-200 dark:border-gray-700 flex-shrink-0">
@@ -384,11 +396,14 @@ const AlertManagement = memo<AlertManagementProps>(({
           {renderTabContent()}
         </div>
       </div>
+      <AlertDetailModal alert={selectedAlert} onClose={() => setSelectedAlert(null)} />
+      </>
     );
   }
 
   // Modal mode
   return (
+    <>
     <div 
       className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/50 backdrop-blur-sm"
       onClick={(e) => {
@@ -439,6 +454,8 @@ const AlertManagement = memo<AlertManagementProps>(({
         </div>
       </div>
     </div>
+    <AlertDetailModal alert={selectedAlert} onClose={() => setSelectedAlert(null)} />
+    </>
   );
 });
 

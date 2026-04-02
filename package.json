@@ -1,6 +1,6 @@
 {
   "name": "elasticsearch-performance-monitoring-extension",
-  "version": "1.0.0",
+  "version": "1.0.6",
   "private": true,
   "type": "module",
   "scripts": {
@@ -8,7 +8,8 @@
     "version:sync": "node scripts/sync-version.cjs",
     "build": "npm run version:sync && tsc && vite build && cp -r public/* dist/",
     "preview": "vite preview",
-    "lint": "eslint src --ext ts,tsx"
+    "lint": "eslint src --ext ts,tsx",
+    "pack": "npm run build && node scripts/pack-extension.cjs"
   },
   "dependencies": {
     "clsx": "^2.1.1",

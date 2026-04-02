@@ -12,7 +12,7 @@ export interface AlertRule {
   metricPath: string; // Path to extract value from monitoring data
   condition: AlertCondition;
   enabled: boolean;
-  category: 'cluster' | 'performance' | 'resource' | 'index';
+  category: 'cluster' | 'performance' | 'resource' | 'index' | 'snapshot';
   cooldownMinutes: number; // Minimum time between same alert triggers
 }
 
@@ -36,6 +36,8 @@ export interface AlertInstance {
   clusterName?: string; // For cluster-specific filtering
   nodeId?: string; // For node-specific alerts
   indexName?: string; // For index-specific alerts
+  /** Affected resources (e.g. index names for indices-without-replicas). */
+  affectedResources?: string[];
 }
 
 export interface AlertStats {
@@ -53,6 +55,7 @@ export interface AlertStats {
     performance: number;
     resource: number;
     index: number;
+    snapshot: number;
   };
 }
 

@@ -45,6 +45,12 @@ export class AlertEngine {
         }
         return r;
       });
+      // Merge: add any DEFAULT_ALERT_RULES not present in stored rules (for new installs + upgrades)
+      for (const defaultRule of DEFAULT_ALERT_RULES) {
+        if (!rules.some((r) => r.id === defaultRule.id)) {
+          rules.push(defaultRule);
+        }
+      }
       this.rules = rules;
 
       // Load settings
@@ -72,6 +78,24 @@ export class AlertEngine {
         return a;
       });
       this.alertHistory = history;
+
+      // Restore active alerts from history (survives extension popup close/reopen).
+      // Only restore alerts triggered in the last 24h to avoid showing stale counts (e.g. 9+ from old unresolved alerts).
+      const restoreCutoff = Date.now() - 24 * 60 * 60 * 1000;
+      const activeFromHistory = history.filter(
+        (a) => a.status === 'active' && new Date(a.triggeredAt).getTime() > restoreCutoff
+      );
+      const byRuleCluster = new Map<string, AlertInstance>();
+      for (const alert of activeFromHistory) {
+        const key = `${alert.ruleId}:${alert.clusterName ?? ''}`;
+        const existing = byRuleCluster.get(key);
+        if (!existing || new Date(alert.triggeredAt) > new Date(existing.triggeredAt)) {
+          byRuleCluster.set(key, alert);
+        }
+      }
+      for (const alert of byRuleCluster.values()) {
+        this.activeAlerts.set(alert.id, alert);
+      }
 
       // Clean old history
       this.cleanOldHistory();
@@ -167,6 +191,111 @@ export class AlertEngine {
         return 0;
       }
 
+      if (path === 'snapshots.successfulCountLast24h') {
+        const snapshots = data.snapshots;
+        if (!snapshots || !Array.isArray(snapshots)) return null;
+        const oneDayAgo = Date.now() - 24 * 60 * 60 * 1000;
+        const successfulInLast24h = snapshots.filter(s => {
+          const state = (s.state ?? '').toUpperCase();
+          if (state !== 'SUCCESS') return false;
+          const startTime = s.start_time;
+          if (!startTime) return false;
+          const ms = new Date(startTime).getTime();
+          return Number.isFinite(ms) && ms >= oneDayAgo;
+        });
+        return successfulInLast24h.length;
+      }
+
+      // Explicit handling for cluster health status (metricPath: health.status) — normalize to lowercase so RED/Red/red all trigger
+      if (path === 'health.status') {
+        const status = data.health?.status;
+        if (status == null) return null;
+        return String(status).toLowerCase();
+      }
+
+      if (path === 'clusterSettings.readOnlyBlocked') {
+        const settings = data.clusterSettings;
+        if (!settings) return null;
+        const getBlock = (src: Record<string, unknown> | undefined): boolean => {
+          if (!src?.cluster || typeof src.cluster !== 'object') return false;
+          const cluster = src.cluster as Record<string, unknown>;
+          const blocks = cluster.blocks;
+          if (!blocks || typeof blocks !== 'object') return false;
+          const b = blocks as Record<string, unknown>;
+          const ro = b.read_only; const road = b.read_only_allow_delete;
+          return ro === true || ro === 'true' || road === true || road === 'true';
+        };
+        const blocked = getBlock(settings.persistent as Record<string, unknown>) || getBlock(settings.transient as Record<string, unknown>);
+        return blocked ? 'blocked' : 'unblocked';
+      }
+
+      if (path === 'healthReport.diskStatusDegraded') {
+        const hr = data.healthReport;
+        if (!hr?.indicators || typeof hr.indicators !== 'object') return null;
+        const disk = hr.indicators.disk;
+        if (!disk || typeof disk !== 'object') return null;
+        const status = (disk.status ?? '').toLowerCase();
+        if (status === 'yellow' || status === 'red') return status;
+        return status === 'green' ? 'green' : null;
+      }
+
+      if (path === 'healthReport.ilmStatusDegraded') {
+        const hr = data.healthReport;
+        if (!hr?.indicators || typeof hr.indicators !== 'object') return null;
+        const ilm = hr.indicators.ilm;
+        if (!ilm || typeof ilm !== 'object') return null;
+        const status = (ilm.status ?? '').toLowerCase();
+        if (status === 'yellow' || status === 'red') return status;
+        return status === 'green' ? 'green' : null;
+      }
+
+      if (path === 'indices.countWithoutReplicas') {
+        const indices = data.indices;
+        if (!indices || !Array.isArray(indices)) return null;
+        const systemPrefixes = ['.', '.ds-'];
+        const isSystemIndex = (name: string) => systemPrefixes.some(p => name.startsWith(p));
+        const replicaCount = (idx: { rep?: string | number }) => Number(String(idx.rep ?? '').trim()) || 0;
+        const withoutReplicas = indices.filter(idx => {
+          if (isSystemIndex(idx.index)) return false;
+          return replicaCount(idx) === 0;
+        });
+        return withoutReplicas.length;
+      }
+
+      // Index-level stats from _stats (indexing failures, segments, merges)
+      if (path === 'indices.indexingFailedTotal') {
+        const stats = data.indexStats?.indices;
+        if (!stats || typeof stats !== 'object') return 0;
+        let total = 0;
+        for (const idx of Object.values(stats)) {
+          const failed = idx.primaries?.indexing?.index_failed;
+          if (typeof failed === 'number') total += failed;
+        }
+        return total;
+      }
+
+      if (path === 'indices.maxSegmentCount') {
+        const stats = data.indexStats?.indices;
+        if (!stats || typeof stats !== 'object') return 0;
+        let max = 0;
+        for (const idx of Object.values(stats)) {
+          const count = idx.primaries?.segments?.count;
+          if (typeof count === 'number' && count > max) max = count;
+        }
+        return max;
+      }
+
+      if (path === 'indices.mergeCurrentMax') {
+        const stats = data.indexStats?.indices;
+        if (!stats || typeof stats !== 'object') return 0;
+        let max = 0;
+        for (const idx of Object.values(stats)) {
+          const current = idx.primaries?.merges?.current;
+          if (typeof current === 'number' && current > max) max = current;
+        }
+        return max;
+      }
+
       // Path exists on snapshot (health.status, performanceMetrics.*, etc.)
       const pathParts = path.split('.');
       let value: unknown = data;
@@ -191,8 +320,17 @@ export class AlertEngine {
     const currentValue = this.extractMetricValue(data, rule.metricPath);
     if (currentValue === null || currentValue === undefined) return false;
 
-    // Handle string comparisons (for cluster status)
+    // Handle string comparisons (for cluster status, disk health report, cluster blocks)
     if (typeof currentValue === 'string') {
+      if (rule.id === 'cluster-read-only-blocked') {
+        return currentValue === 'blocked';
+      }
+      if (rule.id === 'disk-watermark-health-report') {
+        return currentValue === 'yellow' || currentValue === 'red';
+      }
+      if (rule.id === 'ilm-errors') {
+        return currentValue === 'yellow' || currentValue === 'red';
+      }
       switch (rule.condition) {
         case 'equals':
           return rule.id === 'cluster-status-red' ? currentValue === 'red' :
@@ -232,8 +370,57 @@ export class AlertEngine {
     return this.evaluateRuleCondition(rule, data);
   }
 
+  /** Get index names that have no replicas (for indices-without-replicas alert). */
+  private getIndicesWithoutReplicas(data: MonitoringSnapshot): string[] {
+    const indices = data.indices;
+    if (!indices || !Array.isArray(indices)) return [];
+    const systemPrefixes = ['.', '.ds-'];
+    const isSystemIndex = (name: string) => systemPrefixes.some(p => name.startsWith(p));
+    const replicaCount = (idx: { rep?: string | number }) => Number(String(idx.rep ?? '').trim()) || 0;
+    return indices
+      .filter(idx => !isSystemIndex(idx.index) && replicaCount(idx) === 0)
+      .map(idx => idx.index);
+  }
+
+  /** Get index names that have shards larger than thresholdBytes (for large-shard-size alert). */
+  private getIndicesWithLargeShards(data: MonitoringSnapshot, thresholdBytes: number): string[] {
+    const indices = data.indices;
+    if (!indices || !Array.isArray(indices) || !Number.isFinite(thresholdBytes)) return [];
+    return indices
+      .filter(idx => {
+        const primarySizeBytes = parseDiskSizeToBytes(idx['pri.store.size']) ?? 0;
+        const priCount = parseInt(idx.pri, 10) || 1;
+        const avgShardBytes = priCount > 0 ? primarySizeBytes / priCount : 0;
+        return avgShardBytes > thresholdBytes;
+      })
+      .map(idx => idx.index);
+  }
+
+  /** Get index names that have indexing failures (index_failed > 0). */
+  private getIndicesWithIndexingFailures(data: MonitoringSnapshot): string[] {
+    const stats = data.indexStats?.indices;
+    if (!stats || typeof stats !== 'object') return [];
+    return Object.entries(stats)
+      .filter(([, idx]) => (idx.primaries?.indexing?.index_failed ?? 0) > 0)
+      .map(([name]) => name);
+  }
+
+  /** Get index names that have segment count above threshold (for high-segment-count alert). */
+  private getIndicesWithHighSegmentCount(data: MonitoringSnapshot, threshold: number): string[] {
+    const stats = data.indexStats?.indices;
+    if (!stats || typeof stats !== 'object' || !Number.isFinite(threshold)) return [];
+    return Object.entries(stats)
+      .filter(([, idx]) => (idx.primaries?.segments?.count ?? 0) > threshold)
+      .map(([name]) => name);
+  }
+
   // Create alert instance from rule
-  private createAlertInstance(rule: AlertRule, currentValue: number | string, clusterName?: string): AlertInstance {
+  private createAlertInstance(
+    rule: AlertRule,
+    currentValue: number | string,
+    clusterName?: string,
+    affectedResources?: string[]
+  ): AlertInstance {
     const now = new Date().toISOString();
     
     return {
@@ -251,7 +438,8 @@ export class AlertEngine {
       firstTriggeredAt: now,
       count: 1,
       category: rule.category,
-      clusterName
+      clusterName,
+      affectedResources
     };
   }
 
@@ -265,7 +453,11 @@ export class AlertEngine {
     for (const rule of this.rules) {
       // Use condition-only check (no cooldown) so we correctly keep/resolve existing alerts
       const conditionMet = this.evaluateRuleCondition(rule, data);
-      const existingAlert = Array.from(this.activeAlerts.values()).find(alert => alert.ruleId === rule.id);
+      const existingAlert = Array.from(this.activeAlerts.values()).find(
+        (alert) =>
+          alert.ruleId === rule.id &&
+          (clusterName == null || alert.clusterName === clusterName)
+      );
 
       if (conditionMet) {
         if (existingAlert) {
@@ -273,6 +465,20 @@ export class AlertEngine {
           const currentValue = this.extractMetricValue(data, rule.metricPath);
           if (currentValue !== null) {
             existingAlert.currentValue = currentValue;
+            if (rule.id === 'indices-without-replicas') {
+              existingAlert.affectedResources = this.getIndicesWithoutReplicas(data);
+            }
+            if (rule.id === 'large-shard-size') {
+              const thresholdBytes = typeof rule.threshold === 'number' ? rule.threshold : 50 * 1024 * 1024 * 1024;
+              existingAlert.affectedResources = this.getIndicesWithLargeShards(data, thresholdBytes);
+            }
+            if (rule.id === 'indexing-failures') {
+              existingAlert.affectedResources = this.getIndicesWithIndexingFailures(data);
+            }
+            if (rule.id === 'high-segment-count') {
+              const segThreshold = typeof rule.threshold === 'number' ? rule.threshold : 500;
+              existingAlert.affectedResources = this.getIndicesWithHighSegmentCount(data, segThreshold);
+            }
             if (existingAlert.status !== 'active') {
               existingAlert.status = 'active';
               existingAlert.resolvedAt = undefined;
@@ -293,7 +499,16 @@ export class AlertEngine {
             if (this.evaluateRuleForNewAlert(rule, data)) {
               const currentValue = this.extractMetricValue(data, rule.metricPath);
               if (currentValue !== null) {
-                const alertInstance = this.createAlertInstance(rule, currentValue, clusterName);
+                const affectedResources = rule.id === 'indices-without-replicas'
+                  ? this.getIndicesWithoutReplicas(data)
+                  : rule.id === 'large-shard-size'
+                    ? this.getIndicesWithLargeShards(data, typeof rule.threshold === 'number' ? rule.threshold : 50 * 1024 * 1024 * 1024)
+                    : rule.id === 'indexing-failures'
+                      ? this.getIndicesWithIndexingFailures(data)
+                      : rule.id === 'high-segment-count'
+                        ? this.getIndicesWithHighSegmentCount(data, typeof rule.threshold === 'number' ? rule.threshold : 500)
+                        : undefined;
+                const alertInstance = this.createAlertInstance(rule, currentValue, clusterName, affectedResources);
                 this.activeAlerts.set(alertInstance.id, alertInstance);
                 this.alertHistory.unshift(alertInstance);
                 newAlerts.push(alertInstance);
@@ -307,16 +522,23 @@ export class AlertEngine {
           }
         }
       } else {
-        // Condition is no longer met, clear tracking and resolve any active alerts
-        this.alertConditionStartTime.delete(rule.id);
-        
-        // Resolve active alert for this rule
-        const activeAlert = Array.from(this.activeAlerts.values())
-          .find(alert => alert.ruleId === rule.id && alert.status === 'active');
-
-        if (activeAlert && activeAlert.status === 'active') {
-          activeAlert.status = 'resolved';
-          activeAlert.resolvedAt = new Date().toISOString();
+        // Condition is no longer met - only resolve when we have data (avoid resolving when data is missing, e.g. healthReport)
+        const currentValue = this.extractMetricValue(data, rule.metricPath);
+        if (currentValue !== null && currentValue !== undefined) {
+          this.alertConditionStartTime.delete(rule.id);
+          const activeAlert = Array.from(this.activeAlerts.values()).find(
+            (alert) =>
+              alert.ruleId === rule.id &&
+              alert.status === 'active' &&
+              (clusterName == null || alert.clusterName === clusterName)
+          );
+          if (activeAlert) {
+            const resolvedAt = new Date().toISOString();
+            const updated = { ...activeAlert, status: 'resolved' as const, resolvedAt };
+            this.activeAlerts.set(activeAlert.id, updated);
+            const historyIndex = this.alertHistory.findIndex((a) => a.id === activeAlert.id);
+            if (historyIndex >= 0) this.alertHistory[historyIndex] = updated;
+          }
         }
       }
     }
@@ -380,7 +602,8 @@ export class AlertEngine {
         cluster: activeAlerts.filter(a => a.category === 'cluster').length,
         performance: activeAlerts.filter(a => a.category === 'performance').length,
         resource: activeAlerts.filter(a => a.category === 'resource').length,
-        index: activeAlerts.filter(a => a.category === 'index').length
+        index: activeAlerts.filter(a => a.category === 'index').length,
+        snapshot: activeAlerts.filter(a => a.category === 'snapshot').length
       }
     };
   }

@@ -11,6 +11,7 @@ import {
   Info
 } from 'lucide-react';
 import AlertItem from './AlertItem';
+import AlertDetailModal from './AlertDetailModal';
 import type { AlertInstance, AlertSeverity } from '../../types/alerts';
 import { ALERT_COLORS } from '../../config/alerts';
 
@@ -30,6 +31,7 @@ const AlertCenter = memo<AlertCenterProps>(({
   const [isExpanded, setIsExpanded] = useState(true);
   const [activeFilter, setActiveFilter] = useState<FilterType>('all');
   const [showFilters, setShowFilters] = useState(false);
+  const [selectedAlert, setSelectedAlert] = useState<AlertInstance | null>(null);
 
   // Filter alerts based on active filter
   const filteredAlerts = useMemo(() => {
@@ -207,12 +209,15 @@ const AlertCenter = memo<AlertCenterProps>(({
           ) : (
             <div className="h-full overflow-y-auto p-2 space-y-2">
               {filteredAlerts.map(alert => (
-                <AlertItem key={alert.id} alert={alert} />
+                <AlertItem key={alert.id} alert={alert} onClick={setSelectedAlert} />
               ))}
             </div>
           )}
         </div>
       )}
+
+      {/* Alert detail modal */}
+      <AlertDetailModal alert={selectedAlert} onClose={() => setSelectedAlert(null)} />
 
       {/* Footer */}
       <div className="bg-gray-50 dark:bg-gray-700 rounded-b-lg border border-gray-200 dark:border-gray-700 px-4 py-2">

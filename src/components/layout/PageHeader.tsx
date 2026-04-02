@@ -1,47 +1,75 @@
 import { ThemeToggle } from '@/components/theme/ThemeToggle';
 import { useMonitoring } from '@/context/MonitoringProvider';
 import { ClusterSelector } from '@/components/layout/ClusterSelector';
-import { Bell, Home } from 'lucide-react';
+import { Bell, Home, RefreshCw } from 'lucide-react';
 
-const POLL_OPTIONS = [
-  { label: 'Off', value: 0 },
-  { label: '10s', value: 10000 },
-  { label: '30s', value: 30000 },
-  { label: '60s', value: 60000 }
-];
+export type MainTab =
+  | 'indexing-search'
+  | 'cluster'
+  | 'nodes'
+  | 'indices'
+  | 'templates'
+  | 'snapshots';
 
-interface PageHeaderProps {
+const TAB_LABELS: Record<MainTab, string> = {
+  'indexing-search': 'Indexing & Search',
+  'cluster': 'Cluster',
+  'nodes': 'Nodes',
+  'indices': 'Indices',
+  'templates': 'Templates',
+  'snapshots': 'Snapshots'
+};
+
+export interface PageHeaderProps {
+  onRefresh?: () => void;
+  refreshing?: boolean;
+  /** Tabs shown in header (top right); when set, tab bar is rendered */
+  mainTab?: MainTab;
+  onTabChange?: (tab: MainTab) => void;
   onOpenAlerts?: () => void;
   onOpenWelcome?: () => void;
-  /** Badge shows this count (e.g. unseen alerts); when 0, badge is hidden */
-  unseenAlertCount?: number;
-  /** Unseen critical count for red styling */
-  unseenCriticalCount?: number;
+  /** Badge shows total active alert count; when 0, badge is hidden */
+  alertCount?: number;
+  /** Critical alert count for red badge styling */
+  criticalCount?: number;
 }
 
-export function PageHeader({ onOpenAlerts, onOpenWelcome, unseenAlertCount = 0, unseenCriticalCount = 0 }: PageHeaderProps) {
-  const {
-    pollInterval,
-    setPollInterval,
-    lastUpdated,
-    activeCluster
-  } = useMonitoring();
+export function PageHeader({ onRefresh, refreshing = false, mainTab, onTabChange, onOpenAlerts, onOpenWelcome, alertCount = 0, criticalCount = 0 }: PageHeaderProps) {
+  const { activeCluster } = useMonitoring();
+  const isIndexingSearchTab = mainTab === 'indexing-search';
+  // Disable when auto-refresh tab or when any refresh (global or tab-specific) is in progress
+  const refreshDisabled = isIndexingSearchTab || refreshing;
+  const refreshTitle = isIndexingSearchTab
+    ? 'Refresh is automatic on this tab to keep rate calculations accurate'
+    : 'Refresh cluster data';
 
-  const alertCount = unseenAlertCount;
-  const criticalAlerts = unseenCriticalCount;
+  const criticalAlerts = criticalCount;
 
   return (
     <header className="flex-shrink-0 border-b border-gray-200 bg-white px-3 py-1.5 shadow-sm transition-colors duration-300 dark:border-gray-700 dark:bg-gray-800">
       <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2">
-        <div className="flex items-center gap-2 flex-shrink-0">
-          <img 
-            src="/icons/searchali_logo.png" 
-            alt="Searchali" 
-            className="h-5 w-auto"
+        <div className="flex items-center gap-3 flex-shrink-0">
+          {/* Brand anchor - far left (standard nav pattern) */}
+          <img
+            src="/icons/searchali_logo.png"
+            alt="Searchali"
+            className="h-5 w-auto flex-shrink-0"
           />
-          <span className="text-xs font-semibold text-red-600 dark:text-red-400">
-            searchali.com
-          </span>
+          <div className="w-px h-5 bg-gray-200 dark:bg-gray-600" aria-hidden />
+          {/* Home */}
+          {onOpenWelcome && (
+            <button
+              onClick={onOpenWelcome}
+              className="p-2 rounded-lg text-gray-500 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-gray-700 transition-colors"
+              title="Home"
+            >
+              <Home className="h-5 w-5" />
+            </button>
+          )}
+          {/* Clusters */}
+          <div>
+            <ClusterSelector />
+          </div>
         </div>
         <div className="flex items-center justify-center min-w-0 px-2">
           <h1
@@ -52,14 +80,45 @@ export function PageHeader({ onOpenAlerts, onOpenWelcome, unseenAlertCount = 0, 
           </h1>
         </div>
         <div className="flex items-center gap-1.5 flex-shrink-0 justify-end pr-6">
-          {/* Welcome Page Button */}
-          {onOpenWelcome && (
+          {/* Tabs */}
+          {mainTab != null && onTabChange && (
+            <div className="flex gap-0 border border-gray-200 dark:border-gray-600 rounded-lg overflow-hidden mr-1">
+              {(
+                [
+                  'indexing-search',
+                  'cluster',
+                  'nodes',
+                  'indices',
+                  'templates',
+                  'snapshots'
+                ] as const
+              ).map((tab) => (
+                <button
+                  key={tab}
+                  type="button"
+                  onClick={() => onTabChange(tab)}
+                  className={`px-2.5 py-1.5 text-xs font-medium transition-colors ${
+                    mainTab === tab
+                      ? 'bg-blue-600 text-white dark:bg-blue-500'
+                      : 'bg-white text-gray-600 hover:bg-gray-50 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600'
+                  }`}
+                >
+                  {TAB_LABELS[tab]}
+                </button>
+              ))}
+            </div>
+          )}
+          {/* Global Refresh - disabled on Indexing & Search tab (to keep rate calculations accurate) */}
+          {activeCluster && onRefresh && (
             <button
-              onClick={onOpenWelcome}
-              className="p-2 rounded-lg text-gray-400 hover:bg-gray-100 dark:text-gray-500 dark:hover:bg-gray-700 transition-colors"
-              title="Welcome page"
+              type="button"
+              onClick={onRefresh}
+              disabled={refreshDisabled}
+              title={refreshTitle}
+              className="flex items-center gap-1 p-2 rounded-lg text-gray-500 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
             >
-              <Home className="h-5 w-5" />
+              <RefreshCw className={`h-5 w-5 ${refreshing ? 'animate-spin' : ''}`} />
+              <span className="text-xs sr-only">Refresh</span>
             </button>
           )}
           {/* Alert Button */}
@@ -85,30 +144,7 @@ export function PageHeader({ onOpenAlerts, onOpenWelcome, unseenAlertCount = 0, 
               )}
             </button>
           )}
-          
-          <div className="pr-4">
-            <ClusterSelector />
-          </div>
-          <label className="flex items-center gap-1 text-xs text-gray-700 dark:text-gray-300">
-            <span className="hidden sm:inline">Interval:</span>
-            <select
-              className="rounded-lg border border-gray-300 bg-white px-1.5 py-1 text-xs text-gray-900 shadow-sm transition-colors duration-200 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 dark:focus:ring-offset-gray-900"
-              value={pollInterval}
-              onChange={(event) => setPollInterval(Number(event.target.value))}
-            >
-              {POLL_OPTIONS.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-          </label>
           <ThemeToggle />
-          {lastUpdated && (
-            <span className="text-[10px] text-gray-500 dark:text-gray-400">
-              {new Date(lastUpdated).toLocaleTimeString('en-US')}
-            </span>
-          )}
         </div>
       </div>
     </header>

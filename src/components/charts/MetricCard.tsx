@@ -1,5 +1,6 @@
 import { memo } from 'react';
 import SparklineChart from './SparklineChart';
+import { InfoPopup } from '@/components/ui/InfoPopup';
 import type { ChartDataPoint } from '@/types/api';
 
 interface MetricCardProps {
@@ -10,6 +11,14 @@ interface MetricCardProps {
   dataKey: keyof ChartDataPoint;
   color: string;
   icon?: React.ReactNode;
+  /** Optional info popup for this metric */
+  info?: {
+    modalTitle: string;
+    children: React.ReactNode;
+  };
+  infoOpen?: boolean;
+  onInfoOpen?: () => void;
+  onInfoClose?: () => void;
 }
 
 const MetricCard = memo<MetricCardProps>(({
@@ -19,7 +28,11 @@ const MetricCard = memo<MetricCardProps>(({
   data,
   dataKey,
   color,
-  icon
+  icon,
+  info,
+  infoOpen,
+  onInfoOpen,
+  onInfoClose
 }) => {
   const formatValue = (val: number) => {
     if (dataKey.includes('Rate')) {
@@ -66,11 +79,22 @@ const MetricCard = memo<MetricCardProps>(({
   return (
     <div className="rounded-md bg-gradient-to-br from-white to-gray-50 p-2 shadow dark:from-gray-800 dark:to-gray-900/50 dark:border dark:border-gray-700">
       <div className="flex items-center justify-between mb-1">
-        <div className="flex items-center gap-1.5">
+        <div className="flex items-center gap-1.5 min-w-0">
           {icon && <div className="text-gray-600 dark:text-gray-400 shrink-0">{icon}</div>}
           <h3 className="text-[11px] font-semibold text-gray-700 dark:text-gray-300 truncate">
             {title}
           </h3>
+          {info && onInfoOpen && onInfoClose && (
+            <InfoPopup
+              title={title}
+              modalTitle={info.modalTitle}
+              open={!!infoOpen}
+              onOpen={onInfoOpen}
+              onClose={onInfoClose}
+            >
+              {info.children}
+            </InfoPopup>
+          )}
         </div>
         {trend && (
           <div className={`flex items-center gap-0.5 text-[11px] shrink-0 ${trend.isPositive ? 'text-green-600' : 'text-red-600'}`}>

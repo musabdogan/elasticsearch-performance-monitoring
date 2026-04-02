@@ -3,148 +3,126 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Privacy Policy - Elasticsearch Performance Monitoring</title>
+  <title>Privacy - Elasticsearch Performance Monitoring</title>
   <style>
     body {
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-      line-height: 1.6;
-      max-width: 800px;
+      line-height: 1.7;
+      max-width: 640px;
       margin: 0 auto;
-      padding: 20px;
-      color: #333;
-      background-color: #fff;
+      padding: 32px 24px;
+      color: #334155;
+      background: #fff;
     }
     h1 {
-      color: #1b2554;
-      border-bottom: 2px solid #1b2554;
-      padding-bottom: 10px;
+      font-size: 1.5rem;
+      font-weight: 600;
+      color: #0f172a;
+      margin-bottom: 24px;
     }
     h2 {
-      color: #192352;
-      margin-top: 30px;
+      font-size: 1rem;
+      font-weight: 600;
+      color: #1e293b;
+      margin-top: 28px;
+      margin-bottom: 8px;
+    }
+    p {
+      margin: 0 0 12px;
+      font-size: 0.9375rem;
+    }
+    ul {
+      margin: 0 0 12px;
+      padding-left: 1.25rem;
+    }
+    li {
+      margin-bottom: 6px;
+    }
+    strong {
+      color: #1e293b;
+    }
+    a {
+      color: #1b2554;
+      text-decoration: none;
+    }
+    a:hover {
+      text-decoration: underline;
     }
     .last-updated {
-      color: #666;
-      font-style: italic;
-      margin-bottom: 30px;
+      color: #64748b;
+      font-size: 0.875rem;
+      margin-bottom: 24px;
     }
     .contact {
-      background-color: #f6f8f9;
-      padding: 15px;
-      border-radius: 5px;
-      margin-top: 30px;
+      margin-top: 32px;
+      padding-top: 20px;
+      border-top: 1px solid #e2e8f0;
+      font-size: 0.875rem;
+      color: #64748b;
     }
   </style>
 </head>
 <body>
-  <h1>Privacy Policy</h1>
-  <p class="last-updated">Last updated: February 2025</p>
+  <h1>Privacy</h1>
+  <p class="last-updated">Last updated: March 2025</p>
 
-  <h2>Introduction</h2>
+  <h2>Usage of personal data</h2>
   <p>
-    This Privacy Policy describes how the Elasticsearch Performance Monitoring Chrome Extension ("we", "our", or "the Extension") handles information when you use our extension. We are committed to protecting your privacy and ensuring transparency about our data practices.
+    This extension does <strong>not</strong> collect or use any personal data at all.
   </p>
 
-  <h2>Information We Collect</h2>
+  <h2>Usage of your Elasticsearch data</h2>
   <p>
-    The Extension is designed with privacy in mind. We collect minimal information necessary for the extension to function:
+    This extension does <strong>not</strong> analyze the data in your Elasticsearch cluster.
   </p>
-  <ul>
-    <li><strong>Cluster configurations:</strong> When you add an Elasticsearch cluster, you may provide cluster URLs and optional authentication credentials (username/password). This information is stored locally on your device using Chrome's storage API.</li>
-    <li><strong>User preferences:</strong> Your theme preference (dark/light mode), polling interval (e.g. 10s, 30s), alert settings, and selected active cluster are stored locally on your device.</li>
-  </ul>
-
-  <h2>How We Use Your Information</h2>
   <p>
-    The information you provide is used solely for the following purposes:
+    This extension does <strong>not</strong> send data from your Elasticsearch cluster to any other service.
   </p>
-  <ul>
-    <li>To connect to your Elasticsearch clusters and retrieve performance and health data</li>
-    <li>To maintain your preferences and settings across sessions</li>
-    <li>To provide the core functionality of the extension (monitoring dashboard, alerts)</li>
-  </ul>
-
-  <h2>Data Storage and Security</h2>
   <p>
-    All data collected by the Extension is stored locally on your device using Chrome's storage API. We do not:
+    Monitoring data (cluster health, node stats, index stats, etc.) is fetched only for display in the dashboard. It is not stored permanently or transmitted elsewhere.
+  </p>
+
+  <h2>Local storage</h2>
+  <p>
+    The Extension stores the following on your device only, using Chrome's storage API:
   </p>
   <ul>
-    <li>Transmit any data to external servers</li>
-    <li>Share your data with third parties</li>
-    <li>Use your data for advertising or analytics</li>
-    <li>Access your data remotely</li>
+    <li><strong>Cluster configurations:</strong> URLs and optional credentials (username/password or API key) for clusters you add manually.</li>
+    <li><strong>Preferences:</strong> Theme (dark/light), polling interval, alert settings, selected cluster.</li>
   </ul>
   <p>
     Your cluster configurations and credentials remain on your device and are never sent to us or any third party.
   </p>
 
-  <h2>Data Retrieved from Elasticsearch Clusters</h2>
+  <h2>Browser extension permissions</h2>
   <p>
-    The Extension connects only to Elasticsearch clusters that you configure. It retrieves technical monitoring data such as:
+    The Chrome extension requires the following permission:
   </p>
   <ul>
-    <li>Cluster health status</li>
-    <li>Indexing and search rates and latencies</li>
-    <li>Index statistics (shards, size, document counts)</li>
-    <li>Node statistics and resource usage (CPU, JVM heap, storage)</li>
+    <li><strong>Read and change all your data on the website you visit</strong> (Chrome) / <strong>Access your data for all websites</strong> (Firefox)</li>
   </ul>
   <p>
-    This data is displayed in the extension's dashboard and is not stored permanently or transmitted elsewhere. It is used only for real-time monitoring and is not sent to our servers or any third party.
+    This is the same permission name for different browsers. In theory, the extension could read and change data on any website you visit. This is not what the extension intends to do.
   </p>
-
-  <h2>Permissions</h2>
-  <p>The Extension requires the following permissions:</p>
-  <ul>
-    <li><strong>Storage:</strong> To save your cluster configurations and preferences locally on your device.</li>
-    <li><strong>Host permissions (&lt;all_urls&gt;):</strong> To connect to Elasticsearch clusters that you specify. The extension only connects to clusters you manually add and does not automatically visit or monitor any other websites.</li>
-  </ul>
-
-  <h2>Third-Party Services</h2>
   <p>
-    The Extension does not use any third-party analytics services, advertising networks, or data collection services. All functionality is self-contained within the extension.
+    <strong>This extension does not read or change any data of any websites that you visit, and it will never do that.</strong>
   </p>
-
-  <h2>Data Sharing</h2>
   <p>
-    We do not sell, trade, or otherwise transfer your information to third parties. Your data remains on your device and is never transmitted to external servers.
+    The only reason for this permission is convenience: you can connect to your Elasticsearch cluster without configuring CORS. You can start using the extension right away without any cluster configuration. This is common practice for browser addons that communicate directly with Elasticsearch.
   </p>
 
-  <h2>Your Rights</h2>
+  <h2>Third-party services</h2>
   <p>
-    You have full control over your data:
-  </p>
-  <ul>
-    <li>You can add or remove cluster configurations at any time</li>
-    <li>You can clear all stored data by uninstalling the extension</li>
-    <li>All data is stored locally and can be managed through Chrome's extension settings</li>
-  </ul>
-
-  <h2>Children's Privacy</h2>
-  <p>
-    The Extension is not intended for use by children under the age of 13. We do not knowingly collect information from children.
+    The Extension does not use any third-party analytics, advertising, or data collection services. All functionality is self-contained.
   </p>
 
-  <h2>Changes to This Privacy Policy</h2>
-  <p>
-    We may update this Privacy Policy from time to time. We will notify you of any changes by posting the new Privacy Policy on this page and updating the "Last updated" date.
-  </p>
-
-  <h2>Contact Us</h2>
   <div class="contact">
     <p>
-      If you have any questions about this Privacy Policy, please contact us:
-    </p>
-    <p>
-      <strong>GitHub Repository:</strong> <a href="https://github.com/musabdogan/elasticsearch-performance-monitoring" target="_blank" rel="noopener noreferrer">https://github.com/musabdogan/elasticsearch-performance-monitoring</a>
+      <strong>GitHub:</strong> <a href="https://github.com/musabdogan/elasticsearch-performance-monitoring" target="_blank" rel="noopener noreferrer">elasticsearch-performance-monitoring</a>
     </p>
     <p>
       <strong>Powered by:</strong> <a href="https://www.searchali.com" target="_blank" rel="noopener noreferrer">searchali.com</a>
     </p>
   </div>
-
-  <h2>Consent</h2>
-  <p>
-    By using the Elasticsearch Performance Monitoring Chrome Extension, you consent to this Privacy Policy.
-  </p>
 </body>
 </html>

@@ -24,7 +24,7 @@ type ControlledSort = {
 type DataTableProps<T> = {
   data: T[];
   columns: Column<T>[];
-  emptyMessage?: string;
+  emptyMessage?: ReactNode;
   dense?: boolean;
   noHorizontalScroll?: boolean;
   tableId?: string;
@@ -84,24 +84,20 @@ export function DataTable<T extends object>({
     let newDirection: SortDirection;
 
     if (currentColumn === columnKey) {
-      if (currentDirection === 'asc') {
-        newDirection = 'desc';
+      // Cycle: desc → asc → off (null) → desc on next click (handled as new column when sort was cleared)
+      if (currentDirection === 'desc') {
+        newDirection = 'asc';
         newColumn = columnKey;
-      } else if (currentDirection === 'desc') {
+      } else if (currentDirection === 'asc') {
         newDirection = null;
         newColumn = null;
       } else {
-        newDirection = 'asc';
+        newDirection = 'desc';
         newColumn = columnKey;
       }
     } else {
       newColumn = columnKey;
-      // Start with desc (descending) for rate columns on first click
-      const isRateColumn = columnKey.toLowerCase().includes('rate') || 
-                          columnKey.toLowerCase().includes('latency') ||
-                          columnKey === 'docCountNum' ||
-                          columnKey === 'totalSizeBytes';
-      newDirection = isRateColumn ? 'desc' : 'asc';
+      newDirection = 'desc';
     }
 
     if (controlledSort) {
@@ -172,7 +168,7 @@ export function DataTable<T extends object>({
   return (
     <div className="overflow-hidden rounded border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-800">
       <div className={clsx('relative overflow-y-visible', noHorizontalScroll ? 'overflow-x-hidden' : 'overflow-x-auto')}>
-        <table className={clsx('w-full text-left', dense ? 'text-xs' : 'text-sm')}>
+        <table className={clsx('w-full text-left', dense ? 'tab-content-label' : 'tab-content-value')}>
           <thead>
             <tr className="border-b-2 border-gray-300 bg-gray-100 dark:border-gray-600 dark:bg-gray-800">
               {columns.map((column) => {
@@ -184,7 +180,7 @@ export function DataTable<T extends object>({
                     key={column.key as string}
                     className={clsx(
                       'px-3 py-2.5 font-bold text-gray-900 dark:text-gray-50',
-                      dense ? 'text-xs' : 'text-sm',
+                      dense ? 'tab-content-label' : 'tab-content-value',
                       column.className,
                       {
                         'text-left': column.align === 'left' || !column.align,

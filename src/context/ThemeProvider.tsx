@@ -19,11 +19,11 @@ function getSystemTheme(): 'light' | 'dark' {
 }
 
 export function ThemeProvider({ children }: { children: ReactNode }) {
-  const [theme, setThemeState] = useState<Theme>(() => 
-    getStoredValue<Theme>(THEME_STORAGE_KEY, 'system')
+  const [theme, setThemeState] = useState<Theme>(() =>
+    getStoredValue<Theme>(THEME_STORAGE_KEY, 'dark')
   );
   const [resolvedTheme, setResolvedTheme] = useState<'light' | 'dark'>(() => {
-    const stored = getStoredValue<Theme>(THEME_STORAGE_KEY, 'system');
+    const stored = getStoredValue<Theme>(THEME_STORAGE_KEY, 'dark');
     return stored === 'system' ? getSystemTheme() : stored;
   });
 

@@ -16,9 +16,10 @@ import { ALERT_COLORS, ALERT_CATEGORY_ICONS } from '../../config/alerts';
 interface AlertItemProps {
   alert: AlertInstance;
   compact?: boolean;
+  onClick?: (alert: AlertInstance) => void;
 }
 
-const AlertItem = memo<AlertItemProps>(({ alert, compact = false }) => {
+const AlertItem = memo<AlertItemProps>(({ alert, compact = false, onClick }) => {
   const colors = ALERT_COLORS[alert.severity];
   
   const getSeverityIcon = () => {
@@ -89,35 +90,50 @@ const AlertItem = memo<AlertItemProps>(({ alert, compact = false }) => {
 
   const formatValue = (value: number | string, unit: string) => {
     if (typeof value === 'string') return value;
+    const n = typeof value === 'number' ? value : parseFloat(String(value));
     
     // Percent: show as integer (e.g. 81.65... => 82%)
     if (unit === '%') {
-      const n = typeof value === 'number' ? value : parseFloat(String(value));
       return `${Math.round(n)}%`;
     }
     
     // Handle byte values
     if (unit === 'bytes') {
-      const gb = value / (1024 * 1024 * 1024);
-      return gb >= 1 ? `${gb.toFixed(1)} GB` : `${(value / (1024 * 1024)).toFixed(1)} MB`;
+      const gb = n / (1024 * 1024 * 1024);
+      return gb >= 1 ? `${gb.toFixed(1)} GB` : `${(n / (1024 * 1024)).toFixed(1)} MB`;
     }
     
     // Handle milliseconds
-    if (unit === 'ms' && value >= 1000) {
-      return `${(value / 1000).toFixed(1)} s`;
+    if (unit === 'ms' && n >= 1000) {
+      return `${(n / 1000).toFixed(1)} s`;
+    }
+    
+    // Rate (ops/sec, /sec): human-friendly, avoid long decimals (e.g. 0.20048… → "0.2 ops/sec")
+    if (unit === 'ops/sec' || unit === '/sec') {
+      const decimals = n < 1 ? 2 : n < 10 ? 1 : 0;
+      const formatted = n.toFixed(decimals).replace(/\.?0+$/, '');
+      return `${formatted} ${unit}`;
     }
     
     // Handle large numbers
-    if (typeof value === 'number' && value >= 1000000) {
-      return `${(value / 1000000).toFixed(1)}M`;
+    if (typeof value === 'number' && n >= 1000000) {
+      return `${(n / 1000000).toFixed(1)}M`;
     }
     
     return `${value} ${unit}`;
   };
 
+  const wrapperClass = `flex items-center gap-2 p-2 rounded-lg border-l-4 ${colors.border} ${colors.bg} transition-all duration-200 ${onClick ? 'cursor-pointer hover:shadow-sm' : 'hover:shadow-sm'}`;
+
   if (compact) {
     return (
-      <div className={`flex items-center gap-2 p-2 rounded-lg border-l-4 ${colors.border} ${colors.bg} transition-all duration-200 hover:shadow-sm`}>
+      <div
+        className={wrapperClass}
+        role={onClick ? 'button' : undefined}
+        tabIndex={onClick ? 0 : undefined}
+        onClick={onClick ? () => onClick(alert) : undefined}
+        onKeyDown={onClick ? (e) => e.key === 'Enter' && onClick(alert) : undefined}
+      >
         <div className={`${colors.icon} flex-shrink-0`}>
           {getSeverityIcon()}
         </div>
@@ -146,8 +162,8 @@ const AlertItem = memo<AlertItemProps>(({ alert, compact = false }) => {
           </div>
         </div>
         {alert.status === 'resolved' && (
-          <span className="flex items-center gap-1 text-xs font-medium text-green-600 dark:text-green-400">
-            <Check className="h-3.5 w-3.5" />
+          <span className="flex shrink-0 items-center gap-1 text-xs font-medium text-green-600 dark:text-green-400">
+            <Check className="h-3.5 w-3.5" aria-hidden />
             Solved
           </span>
         )}
@@ -155,8 +171,16 @@ const AlertItem = memo<AlertItemProps>(({ alert, compact = false }) => {
     );
   }
 
+  const fullWrapperClass = `rounded-lg border-l-4 ${colors.border} ${colors.bg} p-4 shadow-sm transition-all duration-200 ${onClick ? 'cursor-pointer hover:shadow-md' : 'hover:shadow-md'}`;
+
   return (
-    <div className={`rounded-lg border-l-4 ${colors.border} ${colors.bg} p-4 shadow-sm transition-all duration-200 hover:shadow-md`}>
+    <div
+      className={fullWrapperClass}
+      role={onClick ? 'button' : undefined}
+      tabIndex={onClick ? 0 : undefined}
+      onClick={onClick ? () => onClick(alert) : undefined}
+      onKeyDown={onClick ? (e) => e.key === 'Enter' && onClick(alert) : undefined}
+    >
       {/* Header */}
       <div className="flex items-start justify-between gap-2 mb-2">
         <div className="flex items-center gap-2 flex-1 min-w-0">
@@ -213,8 +237,8 @@ const AlertItem = memo<AlertItemProps>(({ alert, compact = false }) => {
         
         {/* Status: Solved (green tick) or Active badge */}
         {alert.status === 'resolved' ? (
-          <span className="flex items-center gap-1.5 px-2 py-1 rounded-full text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300">
-            <Check className="h-3.5 w-3.5" />
+          <span className="flex shrink-0 items-center gap-1.5 px-2 py-1 rounded-full text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300">
+            <Check className="h-3.5 w-3.5" aria-hidden />
             Solved
           </span>
         ) : (
