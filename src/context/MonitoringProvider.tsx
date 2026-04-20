@@ -694,6 +694,22 @@ export function MonitoringProvider({ children }: { children: ReactNode }) {
         setConnectionLost(true);
         setConnectionLostUri(activeCluster.baseUrl.replace(/\/$/, ''));
       } else {
+        const health = result.health;
+        if (health) {
+          const fetchedAt = new Date().toISOString();
+          setSnapshot((prev) => {
+            if (!prev) return prev;
+            return {
+              ...prev,
+              // Keep original metrics fetch timestamp so rate calculations
+              // continue using real stats-to-stats intervals.
+              health
+            };
+          });
+          setHealthHistory((prev) =>
+            mergeHealthHistory(prev, [clusterHealthToCatRow(health, fetchedAt)])
+          );
+        }
         const wasLost = connectionWasLostRef.current;
         setConnectionLost(false);
         setConnectionLostUri(null);

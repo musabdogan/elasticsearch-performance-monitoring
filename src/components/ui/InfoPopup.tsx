@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { X, Info } from 'lucide-react';
 
@@ -24,6 +24,7 @@ interface InfoPopupProps {
 export function InfoPopup({ title, modalTitle, children, open, onClose, onOpen, buttonClassName, placement = 'center' }: InfoPopupProps) {
   const buttonRef = useRef<HTMLButtonElement>(null);
   const [popoverStyle, setPopoverStyle] = useState<{ top: number; left: number } | null>(null);
+  const titleId = useId();
 
   useEffect(() => {
     if (!open) return;
@@ -65,10 +66,10 @@ export function InfoPopup({ title, modalTitle, children, open, onClose, onOpen, 
             style={{ top: popoverStyle.top, left: popoverStyle.left, zIndex: 9999 }}
             role="dialog"
             aria-modal="true"
-            aria-labelledby="info-popup-title"
+            aria-labelledby={titleId}
           >
             <div className="flex-shrink-0 flex items-center justify-between border-b border-gray-200 px-4 py-3 dark:border-gray-600">
-              <h2 id="info-popup-title" className="text-sm font-semibold text-gray-900 dark:text-gray-100">
+              <h2 id={titleId} className="text-sm font-semibold text-gray-900 dark:text-gray-100">
                 {modalTitle}
               </h2>
               <button
@@ -88,36 +89,42 @@ export function InfoPopup({ title, modalTitle, children, open, onClose, onOpen, 
         document.body
       )
     ) : placement === 'center' ? (
-      <div
-        className="fixed inset-0 z-50 flex items-center justify-center p-4"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="info-popup-title"
-      >
+      createPortal(
         <div
-          className="absolute inset-0 bg-black/50 dark:bg-black/60"
-          onClick={onClose}
-          aria-hidden="true"
-        />
-        <div className="relative max-h-[85vh] w-full max-w-md overflow-hidden rounded-lg border border-gray-200 bg-white shadow-xl dark:border-gray-600 dark:bg-gray-800">
-          <div className="flex items-center justify-between border-b border-gray-200 px-4 py-3 dark:border-gray-600">
-            <h2 id="info-popup-title" className="text-sm font-semibold text-gray-900 dark:text-gray-100">
-              {modalTitle}
-            </h2>
-            <button
-              type="button"
-              onClick={onClose}
-              className="rounded p-1 text-gray-500 hover:bg-gray-100 hover:text-gray-700 dark:text-gray-400 dark:hover:bg-gray-700 dark:hover:text-gray-200"
-              aria-label="Close"
-            >
-              <X className="h-5 w-5" />
-            </button>
+          className="fixed inset-0 z-[9998] flex items-center justify-center p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby={titleId}
+        >
+          <div
+            className="absolute inset-0 bg-black/50 dark:bg-black/60"
+            onClick={onClose}
+            aria-hidden="true"
+          />
+          <div
+            className="relative z-[9999] max-h-[85vh] w-full max-w-md overflow-hidden rounded-lg border border-gray-200 bg-white shadow-xl dark:border-gray-600 dark:bg-gray-800"
+            onMouseDown={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between border-b border-gray-200 px-4 py-3 dark:border-gray-600">
+              <h2 id={titleId} className="text-sm font-semibold text-gray-900 dark:text-gray-100">
+                {modalTitle}
+              </h2>
+              <button
+                type="button"
+                onClick={onClose}
+                className="rounded p-1 text-gray-500 hover:bg-gray-100 hover:text-gray-700 dark:text-gray-400 dark:hover:bg-gray-700 dark:hover:text-gray-200"
+                aria-label="Close"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <div className="max-h-[calc(85vh-8rem)] overflow-y-auto px-4 py-3 text-xs text-gray-700 dark:text-gray-300">
+              {children}
+            </div>
           </div>
-          <div className="max-h-[calc(85vh-8rem)] overflow-y-auto px-4 py-3 text-xs text-gray-700 dark:text-gray-300">
-            {children}
-          </div>
-        </div>
-      </div>
+        </div>,
+        document.body
+      )
     ) : null
   );
 

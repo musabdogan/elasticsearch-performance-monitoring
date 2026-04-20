@@ -190,7 +190,7 @@ export async function getClusterSettings(
  */
 export async function checkClusterHealth(
   cluster: ClusterConnection
-): Promise<{ success: boolean; error?: string; clusterUri?: string }> {
+): Promise<{ success: boolean; health?: ClusterHealth; error?: string; clusterUri?: string }> {
   try {
     const url = `${cluster.baseUrl.replace(/\/$/, '')}${apiConfig.endpoints.clusterHealth}`;
     const headers = buildHeaders(cluster);
@@ -204,7 +204,8 @@ export async function checkClusterHealth(
     );
 
     if (response.ok) {
-      return { success: true };
+      const health = (await response.json()) as ClusterHealth;
+      return { success: true, health };
     }
 
     return {

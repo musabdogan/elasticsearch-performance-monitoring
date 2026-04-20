@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Elasticsearch Performance Monitoring",
-  "version": "1.0.6",
+  "version": "1.0.8",
   "description": "Real-time performance monitoring dashboard for Elasticsearch clusters. Track indexing/search rates, latencies, and index statistics.",
   "permissions": [
     "storage"

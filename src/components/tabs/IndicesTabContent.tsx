@@ -27,6 +27,7 @@ import type {
 import Pagination from '@/components/data/Pagination';
 import { InfoPopup } from '@/components/ui/InfoPopup';
 import { TabSectionExpandTrigger } from '@/components/ui/TabSectionExpandTrigger';
+import { formatRelativeTimeShort } from '@/utils/format';
 import {
   RefreshCw,
   Search,
@@ -683,8 +684,6 @@ export function IndicesTabContent({
   const [dataStreamIlmLoading, setDataStreamIlmLoading] = useState(false);
   const [dataStreamIlmError, setDataStreamIlmError] = useState<string | null>(null);
   const [dataStreamIlmExplain, setDataStreamIlmExplain] = useState<IlmExplainResponse | null>(null);
-  const ilmExplainAllCacheRef = useRef<IlmExplainResponse | null>(null);
-  const ilmExplainAllCacheKeyRef = useRef<string>('');
 
   // Index → Node map (cluster-wide _cat/shards; default closed, fetch on expand)
   const [placementExpanded, setPlacementExpanded] = useState(false);
@@ -872,24 +871,51 @@ export function IndicesTabContent({
       }
 
       // Slow path: all/_field_usage_stats henüz gelmemiş, sadece bu index için çağrı yap.
+      // Modal-only akışta mapping gelmeden sadece usage ile parse etmek geçici/yanlış toplam
+      // field sayısı üretebilir; bu yüzden mapping'i de (gerekirse) birlikte getir.
       if (!cluster) return;
 
       (async () => {
         try {
           const controller = new AbortController();
           const signal = controller.signal;
-          const res = await getFieldUsageStats(cluster, indexName, signal);
-          if (!res) return;
+          const [usageRes, detailsRes] = await Promise.all([
+            getFieldUsageStats(cluster, indexName, signal).catch(() => null),
+            effectiveMappings ? Promise.resolve(null) : getIndexDetails(cluster, indexName, signal).catch(() => null)
+          ]);
+
+          const fetchedMappings: MappingsResponse | null =
+            effectiveMappings ??
+            (detailsRes?.[indexName] != null
+              ? {
+                  [indexName]: {
+                    mappings: (detailsRes[indexName] as { mappings?: { properties?: Record<string, unknown> } }).mappings
+                  }
+                }
+              : null);
+
+          if (!usageRes && !fetchedMappings) return;
 
           // Cache per-index field usage so future parses can reuse it.
-          latestFieldUsageRef.current = {
-            ...(latestFieldUsageRef.current ?? {}),
-            ...res
-          } as FieldUsageStatsResponse;
+          if (usageRes) {
+            latestFieldUsageRef.current = {
+              ...(latestFieldUsageRef.current ?? {}),
+              ...usageRes
+            } as FieldUsageStatsResponse;
+          }
+
+          if (fetchedMappings?.[indexName]) {
+            latestMappingsRef.current = {
+              ...(latestMappingsRef.current ?? {}),
+              ...fetchedMappings
+            };
+          }
 
           setFieldUsageAllMap((prev) => {
-            const lite = parseFieldUsageIndexLite(indexName, res, effectiveMappings);
-            const detailed = parseFieldUsageIndexDetailed(indexName, res, effectiveMappings);
+            const usageForParse = usageRes ?? latestFieldUsageRef.current;
+            const mappingForParse = fetchedMappings ?? effectiveMappings;
+            const lite = parseFieldUsageIndexLite(indexName, usageForParse, mappingForParse);
+            const detailed = parseFieldUsageIndexDetailed(indexName, usageForParse, mappingForParse);
             const existing = prev[indexName] ?? {};
             return {
               ...prev,
@@ -959,8 +985,6 @@ export function IndicesTabContent({
       setDataStreamIlmExplain(null);
       setDataStreamModalSortColumn('created');
       setDataStreamModalSortDirection('desc');
-      ilmExplainAllCacheRef.current = null;
-      ilmExplainAllCacheKeyRef.current = '';
     } else {
       setCatalog([]);
       setAliases([]);
@@ -1256,25 +1280,34 @@ export function IndicesTabContent({
       return;
     }
 
-    // Fetch ILM explain once per cluster, then reuse for all data streams.
+    // Try targeted explain first, then fallback to backing indices if needed.
     const controller = new AbortController();
     const signal = controller.signal;
+    const backingIndices = (dataStreamBackingIndicesMap[dsName] ?? []).filter(Boolean);
     setDataStreamIlmError(null);
+    setDataStreamIlmExplain(null);
     (async () => {
       try {
-        const cacheKey = clusterKey;
-        if (ilmExplainAllCacheRef.current && ilmExplainAllCacheKeyRef.current === cacheKey) {
-          setDataStreamIlmExplain(ilmExplainAllCacheRef.current);
-          return;
-        }
         setDataStreamIlmLoading(true);
-        const explainAll = await getIlmExplain(cluster, '*', signal); // => GET /_all/_ilm/explain (no ?index=)
-        ilmExplainAllCacheRef.current = explainAll;
-        ilmExplainAllCacheKeyRef.current = cacheKey;
-        setDataStreamIlmExplain(explainAll);
-      } catch (e) {
-        const msg = e instanceof Error ? e.message : '';
-        const isTimeoutOrNetwork = msg.toLowerCase().includes('timeout') || msg.toLowerCase().includes('network');
+        try {
+          const explain = await getIlmExplain(cluster, dsName, signal);
+          setDataStreamIlmExplain(explain);
+          return;
+        } catch (primaryError) {
+          const primaryMsg = primaryError instanceof Error ? primaryError.message : '';
+          const isUnsupportedDatastreamExplain = /ILM explain (400|404)\b/i.test(primaryMsg);
+          if (!isUnsupportedDatastreamExplain || backingIndices.length === 0) {
+            throw primaryError;
+          }
+          const explainFallback = await getIlmExplain(cluster, backingIndices.join(','), signal);
+          setDataStreamIlmExplain(explainFallback);
+        }
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : '';
+        const lowerMsg = msg.toLowerCase();
+        const isAbort = lowerMsg.includes('abort');
+        if (isAbort) return;
+        const isTimeoutOrNetwork = lowerMsg.includes('timeout') || lowerMsg.includes('network');
         setDataStreamIlmError(
           isTimeoutOrNetwork ? getNetworkErrorMessage(cluster.baseUrl) : (msg || 'Failed to load ILM explain')
         );
@@ -1285,7 +1318,7 @@ export function IndicesTabContent({
     })();
 
     return () => controller.abort();
-  }, [selectedDataStreamName, clusterKey]);
+  }, [selectedDataStreamName, clusterKey, dataStreamBackingIndicesMap]);
 
   useEffect(() => {
     if (dataStreamsExpanded) {
@@ -2506,6 +2539,21 @@ export function IndicesTabContent({
                 <div className="space-y-2">
                   <h4 className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">Index config</h4>
                   <div className="space-y-2">
+                    <div>
+                      <span className="text-gray-500 dark:text-gray-400 block text-xs">Created at</span>
+                      <div
+                        className="font-mono"
+                        title={
+                          (indexDetails?.[selectedIndex] as { settings?: { index?: { creation_date_string?: string } } } | undefined)
+                            ?.settings?.index?.creation_date_string
+                        }
+                      >
+                        {formatRelativeTimeShort(
+                          (indexDetails?.[selectedIndex] as { settings?: { index?: { creation_date_string?: string } } } | undefined)
+                            ?.settings?.index?.creation_date_string
+                        )}
+                      </div>
+                    </div>
                     <div><span className="text-gray-500 dark:text-gray-400 block text-xs">Refresh interval</span><div className="font-mono">{(indexDetails?.[selectedIndex] && (indexDetails[selectedIndex] as { settings?: { index?: { refresh_interval?: string } } }).settings?.index?.refresh_interval) ?? '1s'}</div></div>
                     <div><span className="text-gray-500 dark:text-gray-400 block text-xs">Index mode</span><div className="font-mono">{(indexDetails?.[selectedIndex] as { settings?: { index?: { mode?: string } } } | undefined)?.settings?.index?.mode ?? 'standard'}</div></div>
                     <div><span className="text-gray-500 dark:text-gray-400 block text-xs">Version</span><div className="font-mono">{(indexDetails?.[selectedIndex] as { settings?: { index?: { version?: { created_string?: string } } } })?.settings?.index?.version?.created_string ?? '—'}</div></div>
@@ -2820,7 +2868,97 @@ export function IndicesTabContent({
     );
   }
 
-  if (modalOnly) return indexDetailModal;
+  if (modalOnly) {
+    return (
+      <>
+        {indexDetailModal}
+        {fieldsPopoverIndex && (() => {
+          const summary = fieldUsageAllMap[fieldsPopoverIndex];
+          const fieldList = summary?.fieldList ?? [];
+          return (
+            <FieldsPopoverContent
+              indexName={fieldsPopoverIndex}
+              summary={summary}
+              fieldList={fieldList}
+              usageTypeInfoOpen={usageTypeInfoOpen}
+              setUsageTypeInfoOpen={setUsageTypeInfoOpen}
+              onClose={() => {
+                setUsageTypeInfoOpen(false);
+                setFieldsPopoverIndex(null);
+              }}
+            />
+          );
+        })()}
+        {unsearchedFieldsPopoverIndex && (() => {
+          const summary = fieldUsageAllMap[unsearchedFieldsPopoverIndex];
+          const unsearchedNames =
+            (summary?.unusedFieldNames?.length ? summary.unusedFieldNames : null) ??
+            (summary?.fieldList ?? []).filter((f) => f.usage === 0).map((f) => f.name).sort((a, b) => a.localeCompare(b));
+          return (
+            <div
+              className="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
+              onClick={() => setUnsearchedFieldsPopoverIndex(null)}
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="unsearched-fields-popover-title"
+            >
+              <div
+                className="max-h-[70vh] w-full max-w-2xl overflow-hidden rounded-lg border border-gray-200 bg-white shadow-xl dark:border-gray-600 dark:bg-gray-800"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div className="flex items-center justify-between border-b border-gray-200 px-4 py-3 dark:border-gray-600">
+                  <h3 id="unsearched-fields-popover-title" className="text-sm font-semibold text-gray-900 dark:text-gray-100 font-mono">
+                    Index: {unsearchedFieldsPopoverIndex}
+                  </h3>
+                  <button
+                    type="button"
+                    onClick={() => setUnsearchedFieldsPopoverIndex(null)}
+                    className="rounded p-1.5 text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-600"
+                    aria-label="Close"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                </div>
+                <div className="tab-section-scroll">
+                  {!summary?.hasUsageData ? (
+                    <p className="text-sm text-gray-500 dark:text-gray-400">Usage data not available for this index.</p>
+                  ) : unsearchedNames.length === 0 ? (
+                    <p className="text-sm text-gray-500 dark:text-gray-400">No unsearched fields.</p>
+                  ) : (
+                    <div className="overflow-x-auto rounded border border-gray-200 dark:border-gray-600">
+                      <table className="w-full min-w-[400px] text-left text-sm tab-content-value">
+                        <thead>
+                          <tr className="border-b border-gray-200 bg-gray-100 dark:border-gray-600 dark:bg-gray-700/50">
+                            <th className="min-w-[140px] px-3 py-2 font-semibold text-gray-900 dark:text-gray-100">Field</th>
+                            <th className="min-w-[90px] px-3 py-2 font-semibold text-gray-900 dark:text-gray-100">Usage</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {unsearchedNames.map((name, i) => (
+                            <tr
+                              key={name ?? i}
+                              className="border-b border-gray-100 text-gray-800 dark:border-gray-700 dark:text-gray-200 last:border-b-0"
+                            >
+                              <td className="max-w-[220px] px-3 py-2 font-mono" title={name}>
+                                <span className="block truncate">{name}</span>
+                              </td>
+                              <td className="px-3 py-2 whitespace-nowrap">
+                                <span className="text-amber-600 dark:text-amber-400">unsearched</span>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          );
+        })()}
+      </>
+    );
+  }
 
   return (
     <div className="flex flex-col gap-4">

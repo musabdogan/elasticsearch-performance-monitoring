@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useMemo } from 'react';
+import { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import { useMonitoring } from '@/context/MonitoringProvider';
 import { getCatShards, getCatPendingTasks, getCatRecoveryActive, getHealthReport, getNetworkErrorMessage, getShardAllocationExplain } from '@/services/elasticsearch';
 import type { AllocationExplainResponse, CatShardRow, CatPendingTaskRow, CatRecoveryRow, HealthReportResponse } from '@/types/api';
@@ -48,6 +48,60 @@ function formatShortRelativeTime(isoString: string | undefined): string {
 }
 
 const AFFECTED_INDICES_COLLAPSE_THRESHOLD = 10;
+type AllocationNodeDecision = 'YES' | 'THROTTLE' | 'NO' | 'UNKNOWN';
+
+function getAllocationNodeDecision(nodeDecision: unknown, deciders: unknown): AllocationNodeDecision {
+  if (typeof nodeDecision === 'string') {
+    const normalized = nodeDecision.trim().toUpperCase();
+    if (normalized === 'YES' || normalized === 'THROTTLE' || normalized === 'NO') {
+      return normalized;
+    }
+  }
+
+  const list = Array.isArray(deciders) ? deciders : [];
+  const decisions = list
+    .map((d) => (isRecord(d) && typeof d.decision === 'string' ? d.decision.toUpperCase() : ''))
+    .filter(Boolean);
+
+  if (decisions.includes('NO')) return 'NO';
+  if (decisions.includes('THROTTLE')) return 'THROTTLE';
+  if (decisions.includes('YES')) return 'YES';
+  return 'UNKNOWN';
+}
+
+/** Candidate nodes are nodes that are currently allocatable or throttled (NO excluded). */
+function getCandidateNodeLabel(explain: AllocationExplainResponse | null | undefined): string {
+  if (!explain || !Array.isArray(explain.node_allocation_decisions)) return '-';
+
+  const byName = new Map<string, AllocationNodeDecision>();
+  for (const node of explain.node_allocation_decisions) {
+    const name = node.node_name ?? node.node_id ?? '';
+    if (!name) continue;
+
+    const decision = getAllocationNodeDecision(
+      (node as unknown as Record<string, unknown>).node_decision,
+      node.deciders
+    );
+
+    if (decision !== 'YES' && decision !== 'THROTTLE') continue;
+
+    const prev = byName.get(name);
+    if (!prev || (prev === 'THROTTLE' && decision === 'YES')) {
+      byName.set(name, decision);
+    }
+  }
+
+  const ranked = Array.from(byName.entries())
+    .sort(([nameA, dA], [nameB, dB]) => {
+      const rankA = dA === 'YES' ? 0 : 1;
+      const rankB = dB === 'YES' ? 0 : 1;
+      if (rankA !== rankB) return rankA - rankB;
+      return nameA.localeCompare(nameB);
+    })
+    .map(([name]) => name);
+
+  return ranked.length > 0 ? ranked.join(', ') : '-';
+}
 
 /** Extract API calls from action text, e.g. "[GET _cluster/allocation/explain]" -> ["GET _cluster/allocation/explain"] */
 function extractApiCallsFromAction(actionRaw: string): string[] {
@@ -96,6 +150,7 @@ function HeaderAllClear({ label = 'All Clear!' }: { label?: string }) {
 export function ClusterTabContent({ onRefreshStateChange }: { onRefreshStateChange?: (loading: boolean) => void } = {}) {
   const { activeCluster } = useMonitoring();
   const clusterKey = activeCluster?.baseUrl ?? activeCluster?.label ?? '';
+  const lastInitializedClusterKeyRef = useRef<string | null>(null);
 
   // Collapsible sections — default collapsed so header summaries show at a glance
   const [healthExpanded, setHealthExpanded] = useState(false);
@@ -120,7 +175,10 @@ export function ClusterTabContent({ onRefreshStateChange }: { onRefreshStateChan
 
   const [allocationExplain, setAllocationExplain] = useState<Record<string, AllocationExplainResponse | null>>({});
   const [allocationLoading, setAllocationLoading] = useState(false);
+  const [allocationLoadingKeys, setAllocationLoadingKeys] = useState<Set<string>>(new Set());
   const [allocationError, setAllocationError] = useState<string | null>(null);
+  const allocationAbortRef = useRef<AbortController | null>(null);
+  const allocationExplainRef = useRef<Record<string, AllocationExplainResponse | null>>({});
 
   // Search/pagination/topN (per table)
   const [unassignedSearch, setUnassignedSearch] = useState('');
@@ -206,6 +264,8 @@ export function ClusterTabContent({ onRefreshStateChange }: { onRefreshStateChan
 
   useEffect(() => {
     if (!clusterKey) return;
+    if (lastInitializedClusterKeyRef.current === clusterKey) return;
+    lastInitializedClusterKeyRef.current = clusterKey;
 
     // Reset on cluster change; load all sections in parallel (headers show summaries while collapsed)
     setHealthReport(null);
@@ -214,6 +274,10 @@ export function ClusterTabContent({ onRefreshStateChange }: { onRefreshStateChan
     setActiveRecovery([]);
     setExpandedIndicesKeys(new Set());
     setAllocationExplain({});
+    setAllocationLoadingKeys(new Set());
+    allocationAbortRef.current?.abort();
+    allocationAbortRef.current = null;
+    allocationExplainRef.current = {};
 
     setHealthExpanded(false);
     setUnassignedExpanded(false);
@@ -242,11 +306,23 @@ export function ClusterTabContent({ onRefreshStateChange }: { onRefreshStateChan
     void fetchRecovery();
   }, [clusterKey, fetchHealth, fetchUnassigned, fetchPending, fetchRecovery]);
 
+  useEffect(() => {
+    allocationExplainRef.current = allocationExplain;
+  }, [allocationExplain]);
+
   const unassignedShards = useMemo(() => shards.filter((s) => s.state === 'UNASSIGNED'), [shards]);
 
   const shardKey = (row: CatShardRow): string => {
     return `${row.index}#${row.shard}#${row.prirep === 'p' ? 'primary' : 'replica'}`;
   };
+
+  const unassignedByKey = useMemo(() => {
+    const m = new Map<string, CatShardRow>();
+    for (const row of unassignedShards) {
+      m.set(shardKey(row), row);
+    }
+    return m;
+  }, [unassignedShards]);
 
   // Close unassigned shard details popup with Escape
   useEffect(() => {
@@ -261,43 +337,69 @@ export function ClusterTabContent({ onRefreshStateChange }: { onRefreshStateChan
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [selectedShardKey]);
 
+  const fetchAllocationExplain = useCallback(
+    async (key: string, row: CatShardRow, signal?: AbortSignal | null): Promise<void> => {
+      if (!activeCluster) return;
+
+      setAllocationLoadingKeys((prev) => {
+        if (prev.has(key)) return prev;
+        const next = new Set(prev);
+        next.add(key);
+        return next;
+      });
+
+      try {
+        const res = await getShardAllocationExplain(
+          activeCluster,
+          {
+            index: row.index,
+            shard: Number(row.shard),
+            primary: row.prirep === 'p'
+          },
+          signal ?? null
+        );
+        setAllocationExplain((prev) => ({ ...prev, [key]: res }));
+      } catch {
+        setAllocationExplain((prev) => ({ ...prev, [key]: null }));
+      } finally {
+        setAllocationLoadingKeys((prev) => {
+          if (!prev.has(key)) return prev;
+          const next = new Set(prev);
+          next.delete(key);
+          return next;
+        });
+      }
+    },
+    [activeCluster]
+  );
+
   useEffect(() => {
     if (!unassignedExpanded || !activeCluster || unassignedShards.length === 0) return;
 
     let cancelled = false;
     const controller = new AbortController();
+    allocationAbortRef.current?.abort();
+    allocationAbortRef.current = controller;
 
     const loadExplanations = async () => {
       setAllocationLoading(true);
       setAllocationError(null);
       try {
-        const entries = await Promise.all(
-          unassignedShards.map(async (row) => {
-            const key = shardKey(row);
-            try {
-              const res = await getShardAllocationExplain(
-                activeCluster,
-                {
-                  index: row.index,
-                  shard: Number(row.shard),
-                  primary: row.prirep === 'p'
-                },
-                controller.signal
-              );
-              return [key, res] as const;
-            } catch {
-              return [key, null] as const;
-            }
-          })
-        );
-        if (cancelled) return;
-        setAllocationExplain((prev) => {
-          const next: Record<string, AllocationExplainResponse | null> = { ...prev };
-          for (const [key, value] of entries) {
-            next[key] = value;
-          }
-          return next;
-        });
+        // Fetch explains in background while keeping UI interactive.
+        // Only fetch missing keys; update state incrementally as each completes.
+        const toFetch = unassignedShards
+          .map((row) => ({ row, key: shardKey(row) }))
+          .filter(({ key }) => allocationExplainRef.current[key] === undefined);
+
+        if (toFetch.length === 0) return;
+
+        // Send explain API calls in ordered batches (10 at a time) to finish faster,
+        // while still keeping the request *start* order aligned with the list.
+        const batchSize = 10;
+        for (let i = 0; i < toFetch.length && !cancelled; i += batchSize) {
+          const batch = toFetch.slice(i, i + batchSize);
+          await Promise.allSettled(batch.map((item) => fetchAllocationExplain(item.key, item.row, controller.signal)));
+        }
       } catch (e) {
         if (!cancelled) {
           const msg = e instanceof Error ? e.message : 'Failed to load allocation explanations';
@@ -315,8 +417,32 @@ export function ClusterTabContent({ onRefreshStateChange }: { onRefreshStateChan
     return () => {
       cancelled = true;
       controller.abort();
+      if (allocationAbortRef.current === controller) {
+        allocationAbortRef.current = null;
+      }
     };
-  }, [unassignedExpanded, activeCluster, unassignedShards]);
+  }, [unassignedExpanded, activeCluster, unassignedShards, fetchAllocationExplain]);
+
+  // If user clicks a shard before its explain finished prefetching, fetch it on-demand
+  useEffect(() => {
+    if (!selectedShardKey || !activeCluster || !unassignedExpanded) return;
+    if (allocationExplain[selectedShardKey] !== undefined) return;
+    if (allocationLoadingKeys.has(selectedShardKey)) return;
+
+    const row = unassignedByKey.get(selectedShardKey);
+    if (!row) return;
+
+    const signal = allocationAbortRef.current?.signal ?? null;
+    void fetchAllocationExplain(selectedShardKey, row, signal);
+  }, [
+    selectedShardKey,
+    activeCluster,
+    unassignedExpanded,
+    allocationExplain,
+    allocationLoadingKeys,
+    unassignedByKey,
+    fetchAllocationExplain
+  ]);
 
   // Global Refresh: reload all cluster sections while on Cluster tab
   useEffect(() => {
@@ -337,8 +463,33 @@ export function ClusterTabContent({ onRefreshStateChange }: { onRefreshStateChan
   const filteredUnassigned = useMemo(() => {
     const term = unassignedSearch.trim().toLowerCase();
     if (!term) return unassignedShards;
-    return unassignedShards.filter((s) => (s.index ?? '').toLowerCase().includes(term) || (s.node ?? '').toLowerCase().includes(term));
-  }, [unassignedShards, unassignedSearch]);
+    return unassignedShards.filter((s) => {
+      const key = shardKey(s);
+      const candidateNode = getCandidateNodeLabel(allocationExplain[key]).toLowerCase();
+      return (
+        (s.index ?? '').toLowerCase().includes(term) ||
+        (s.node ?? '').toLowerCase().includes(term) ||
+        candidateNode.includes(term)
+      );
+    });
+  }, [unassignedShards, unassignedSearch, allocationExplain]);
+
+  const sortedFilteredUnassigned = useMemo(() => {
+    const getUnassignedAtMs = (row: CatShardRow): number => {
+      const key = shardKey(row);
+      const at = allocationExplainRef.current[key]?.unassigned_info?.at;
+      const ms = at ? new Date(at).getTime() : NaN;
+      return Number.isFinite(ms) ? ms : Number.POSITIVE_INFINITY;
+    };
+    const primaryRank = (row: CatShardRow): number => (row.prirep === 'p' ? 0 : 1);
+
+    return [...filteredUnassigned].sort((a, b) => {
+      const pr = primaryRank(a) - primaryRank(b);
+      if (pr !== 0) return pr;
+      // Oldest unassigned first (smaller timestamp first). Missing timestamps go last.
+      return getUnassignedAtMs(a) - getUnassignedAtMs(b);
+    });
+  }, [filteredUnassigned]);
 
   const filteredPending = useMemo(() => {
     const term = pendingSearch.trim().toLowerCase();
@@ -698,7 +849,7 @@ export function ClusterTabContent({ onRefreshStateChange }: { onRefreshStateChan
                   ) : allocationLoading ? (
                     <span className="inline-flex items-center gap-1 text-xs text-gray-500 dark:text-gray-400">
                       <RefreshCw className="h-3 w-3 animate-spin shrink-0" aria-hidden />
-                      Explaining…
+                      Loading...
                     </span>
                   ) : unassignedShards.length === 0 ? (
                     <HeaderAllClear />
@@ -774,7 +925,7 @@ export function ClusterTabContent({ onRefreshStateChange }: { onRefreshStateChan
             )}
             <div className="tab-section-scroll tab-section-scroll-flush">
             <DataTable
-              data={filteredUnassigned.slice((unassignedPage - 1) * unassignedPageSize, unassignedPage * unassignedPageSize)}
+              data={sortedFilteredUnassigned.slice((unassignedPage - 1) * unassignedPageSize, unassignedPage * unassignedPageSize)}
               columns={[
                 {
                   key: 'index',
@@ -784,20 +935,21 @@ export function ClusterTabContent({ onRefreshStateChange }: { onRefreshStateChan
                   render: (r) => {
                     const key = shardKey(r);
                     const explain = allocationExplain[key];
-                    const disabled = !explain;
+                    const isLoading = allocationLoadingKeys.has(key);
                     return (
                       <button
                         type="button"
-                        disabled={disabled}
                         onClick={() => setSelectedShardKey(key)}
                         className={`inline-flex max-w-full items-center gap-1 truncate text-left underline-offset-2 ${
-                          disabled
-                            ? 'cursor-default text-gray-500 dark:text-gray-500'
-                            : 'cursor-pointer text-sky-700 hover:text-sky-900 hover:underline dark:text-sky-300 dark:hover:text-sky-200'
+                          'cursor-pointer text-sky-700 hover:text-sky-900 hover:underline dark:text-sky-300 dark:hover:text-sky-200'
                         }`}
                         title={r.index}
                       >
+                        {isLoading && <RefreshCw className="h-3 w-3 animate-spin shrink-0" aria-hidden />}
                         <span className="truncate">{r.index}</span>
+                        {explain === null && !isLoading && (
+                          <span className="ml-1 text-[10px] text-gray-400 dark:text-gray-500">(no explain)</span>
+                        )}
                       </button>
                     );
                   }
@@ -805,6 +957,16 @@ export function ClusterTabContent({ onRefreshStateChange }: { onRefreshStateChan
                 { key: 'shard', header: 'Shard', sortable: true, className: 'font-mono tab-content-value' },
                 { key: 'prirep', header: 'Pri/Rep', sortable: true, className: 'tab-content-value' },
                 { key: 'unassigned.reason', header: 'Reason', render: (r) => r['unassigned.reason'] ?? '-', className: 'tab-content-value max-w-[260px] truncate' },
+                {
+                  key: 'candidate_node',
+                  header: 'Candidate node',
+                  render: (r) => {
+                    const key = shardKey(r);
+                    const explain = allocationExplain[key];
+                    return getCandidateNodeLabel(explain);
+                  },
+                  className: 'tab-content-value max-w-[260px] truncate'
+                },
                 {
                   key: 'unassigned_info.at',
                   header: 'Unassigned at',
@@ -834,14 +996,26 @@ export function ClusterTabContent({ onRefreshStateChange }: { onRefreshStateChan
       </section>
 
       {/* Unassigned shard allocation details modal */}
-      {selectedShardKey && allocationExplain[selectedShardKey] && (() => {
-        const explain = allocationExplain[selectedShardKey]!;
-        const nodeDecisions = Array.isArray(explain.node_allocation_decisions) ? explain.node_allocation_decisions : [];
+      {selectedShardKey && (() => {
+        const explain = allocationExplain[selectedShardKey];
         const [indexName, shardId, role] = selectedShardKey.split('#');
         const isPrimary = role === 'primary';
+        const nodeDecisions = Array.isArray(explain?.node_allocation_decisions) ? explain!.node_allocation_decisions : [];
         return (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-3">
-            <div className="max-h-[80vh] w-full max-w-3xl overflow-hidden rounded-lg bg-white shadow-xl ring-1 ring-black/10 dark:bg-slate-900 dark:ring-slate-700">
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-3"
+            role="dialog"
+            aria-modal="true"
+            onMouseDown={(e) => {
+              if (e.target === e.currentTarget) {
+                setSelectedShardKey(null);
+              }
+            }}
+          >
+            <div
+              className="max-h-[80vh] w-full max-w-3xl overflow-hidden rounded-lg bg-white shadow-xl ring-1 ring-black/10 dark:bg-slate-900 dark:ring-slate-700"
+              onMouseDown={(e) => e.stopPropagation()}
+            >
               <div className="flex items-start justify-between border-b border-gray-200 px-4 py-3 dark:border-slate-700">
                 <div className="min-w-0">
                   <div className="flex flex-wrap items-center gap-2">
@@ -859,14 +1033,14 @@ export function ClusterTabContent({ onRefreshStateChange }: { onRefreshStateChan
                     )}
                   </div>
                   <p className="mt-0.5 text-xs text-gray-600 dark:text-gray-400">
-                    Shard {shardId} • {isPrimary ? 'Primary' : 'Replica'} • {explain.current_state ?? 'unassigned'}
+                    Shard {shardId} • {isPrimary ? 'Primary' : 'Replica'} • {explain?.current_state ?? 'unassigned'}
                   </p>
-                  {explain.unassigned_info?.reason && (
+                  {explain?.unassigned_info?.reason && (
                     <p className="mt-0.5 text-[11px] text-gray-500 dark:text-gray-400">
                       Reason: {explain.unassigned_info.reason}
                     </p>
                   )}
-                  {explain.unassigned_info?.at && (
+                  {explain?.unassigned_info?.at && (
                     <p className="mt-0.5 text-[11px] text-gray-500 dark:text-gray-400">
                       Unassigned since {formatShortRelativeTime(explain.unassigned_info.at)}
                     </p>
@@ -882,7 +1056,16 @@ export function ClusterTabContent({ onRefreshStateChange }: { onRefreshStateChan
                 </button>
               </div>
               <div className="max-h-[60vh] overflow-auto px-4 py-3">
-                {nodeDecisions.length === 0 ? (
+                {explain === undefined ? (
+                  <div className="flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
+                    <RefreshCw className="h-4 w-4 animate-spin shrink-0" aria-hidden />
+                    Loading allocation explain…
+                  </div>
+                ) : explain === null ? (
+                  <p className="text-xs text-gray-500 dark:text-gray-400">
+                    Allocation explain not available for this shard (request failed or returned no data).
+                  </p>
+                ) : nodeDecisions.length === 0 ? (
                   <p className="text-xs text-gray-500 dark:text-gray-400">
                     No node allocation decisions available for this shard.
                   </p>

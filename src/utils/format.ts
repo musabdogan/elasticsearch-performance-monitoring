@@ -138,6 +138,22 @@ export function formatRelativeTime(isoString: string): string {
   return `${diffDay} day${diffDay !== 1 ? 's' : ''} ago`;
 }
 
+/** Format an ISO timestamp as compact relative time (e.g. "22d ago", "3h ago"). */
+export function formatRelativeTimeShort(isoString: string | null | undefined): string {
+  if (!isoString) return '—';
+  const date = new Date(isoString);
+  if (!Number.isFinite(date.getTime())) return String(isoString);
+  const diffMs = Date.now() - date.getTime();
+  const diffSec = Math.floor(diffMs / 1000);
+  const diffMin = Math.floor(diffSec / 60);
+  const diffHour = Math.floor(diffMin / 60);
+  if (diffSec < 60) return `${diffSec}s ago`;
+  if (diffMin < 60) return `${diffMin}m ago`;
+  if (diffHour < 24) return `${diffHour}h ago`;
+  const diffDay = Math.floor(diffHour / 24);
+  return `${diffDay}d ago`;
+}
+
 /**
  * Format a date as relative age (e.g. "3 days old", "2 weeks old", "5 months old", "1 year old").
  * Accepts ISO date string or epoch ms. Returns "—" if invalid.
