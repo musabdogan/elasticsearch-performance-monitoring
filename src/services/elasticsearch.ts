@@ -317,6 +317,62 @@ export async function getIndexStatsForIndex(
   return (await response.json()) as SingleIndexStatsResponse;
 }
 
+/**
+ * Shards tab: Shard-level indexing/search counters for a single index.
+ * We prefer index-scoped _stats (level=shards) to avoid long URLs and 400/414 errors from _nodes/stats filter_path.
+ */
+export async function getIndexShardStatsForIndex(
+  cluster: ClusterConnection,
+  index: string,
+  signal?: AbortSignal | null
+): Promise<unknown | null> {
+  const base = cluster.baseUrl.replace(/\/$/, '');
+  const path = `/${encodeURIComponent(index)}/_stats`;
+  const filter =
+    'level=shards&metric=indexing,search&filter_path=indices.*.shards.*.*.routing,indices.*.shards.*.*.indexing,indices.*.shards.*.*.search';
+  const url = `${base}${path}?${filter}`;
+  const headers = buildHeaders(cluster);
+  const response = await fetchWithTimeoutAndRetry(url, headers, signal, {}, cluster);
+  if (response.status === 404) return null;
+  if (!response.ok) throw new Error(`Index shard stats ${response.status} ${response.statusText}`);
+  return (await response.json()) as unknown;
+}
+
+/**
+ * Shards tab: Shard-level indexing/search counters for ALL indices.
+ * Single request, same philosophy as Index Statistics: compute across the whole cluster.
+ *
+ * Note: This can be a large response on very big clusters; we use filter_path to keep it reasonable.
+ */
+export async function getNodesStatsShardsAll(
+  cluster: ClusterConnection,
+  signal?: AbortSignal | null
+): Promise<unknown | null> {
+  const base = cluster.baseUrl.replace(/\/$/, '');
+  const path = '/_nodes/stats/indices';
+  const filterPath = [
+    'nodes.*.name',
+    // indices.shards.{index}.{shard} is typically an array of shard copies (routing + stats).
+    // Use 2 wildcards (index + shard) and then object fields.
+    'nodes.*.indices.shards.*.*.routing.primary',
+    'nodes.*.indices.shards.*.*.indexing.index_total',
+    'nodes.*.indices.shards.*.*.indexing.index_time_in_millis',
+    'nodes.*.indices.shards.*.*.search.query_total',
+    'nodes.*.indices.shards.*.*.search.query_time_in_millis'
+  ].join(',');
+  const qs = new URLSearchParams({
+    level: 'shards',
+    metric: 'indexing,search',
+    filter_path: filterPath
+  });
+  const url = `${base}${path}?${qs.toString()}`;
+  const headers = buildHeaders(cluster);
+  const response = await fetchWithTimeoutAndRetry(url, headers, signal, {}, cluster);
+  if (response.status === 400 || response.status === 404) return null;
+  if (!response.ok) throw new Error(`Nodes stats shards ${response.status} ${response.statusText}`);
+  return (await response.json()) as unknown;
+}
+
 // Tab-specific endpoints (Cluster, Nodes, Snapshots)
 export async function getClusterStats(cluster: ClusterConnection, signal?: AbortSignal | null): Promise<ClusterStats> {
   return request<ClusterStats>('clusterStats', cluster, signal);
@@ -527,6 +583,8 @@ export async function getSnapshotStatus(
       'snapshots.stats.time_in_millis',
       'snapshots.stats.incremental.file_count',
       'snapshots.stats.incremental.size_in_bytes',
+      'snapshots.stats.processed.file_count',
+      'snapshots.stats.processed.size_in_bytes',
       'snapshots.stats.total.file_count',
       'snapshots.stats.total.size_in_bytes',
       'snapshots.indices.*.shards_stats',
@@ -702,6 +760,14 @@ export async function getCatShardsBytes(
   const data = await request<CatShardRow[]>('catShardsBytes', cluster, signal);
   return Array.isArray(data) ? data : [];
 }
+
+/**
+ * Shards tab: Fetch shard-level indexing/search counters for a limited set of indices.
+ * Uses _nodes/stats/indices with level=shards so we can compute delta rates per shard.
+ *
+ * IMPORTANT: We scope by indices via filter_path to keep payload manageable.
+ */
+// Note: previous _nodes/stats shard-level implementation removed because it produced long URLs and request storms.
 
 // ——— Templates tab ———
 

@@ -551,6 +551,8 @@ export interface NodeStatsExtendedEntry {
   };
 }
 
+// Shards tab: index-scoped _stats?level=shards parsing is done as unknown to stay compatible across ES versions.
+
 // Nodes tab: _cat/thread_pool?format=json response row
 export interface CatThreadPoolRow {
   node_name?: string;

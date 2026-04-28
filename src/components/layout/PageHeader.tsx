@@ -8,6 +8,7 @@ export type MainTab =
   | 'cluster'
   | 'nodes'
   | 'indices'
+  | 'shards'
   | 'templates'
   | 'snapshots';
 
@@ -16,6 +17,7 @@ const TAB_LABELS: Record<MainTab, string> = {
   'cluster': 'Cluster',
   'nodes': 'Nodes',
   'indices': 'Indices',
+  'shards': 'Shards',
   'templates': 'Templates',
   'snapshots': 'Snapshots'
 };
@@ -37,9 +39,10 @@ export interface PageHeaderProps {
 export function PageHeader({ onRefresh, refreshing = false, mainTab, onTabChange, onOpenAlerts, onOpenWelcome, alertCount = 0, criticalCount = 0 }: PageHeaderProps) {
   const { activeCluster } = useMonitoring();
   const isIndexingSearchTab = mainTab === 'indexing-search';
+  const isShardsTab = mainTab === 'shards';
   // Disable when auto-refresh tab or when any refresh (global or tab-specific) is in progress
-  const refreshDisabled = isIndexingSearchTab || refreshing;
-  const refreshTitle = isIndexingSearchTab
+  const refreshDisabled = isIndexingSearchTab || isShardsTab || refreshing;
+  const refreshTitle = isIndexingSearchTab || isShardsTab
     ? 'Refresh is automatic on this tab to keep rate calculations accurate'
     : 'Refresh cluster data';
 
@@ -89,6 +92,7 @@ export function PageHeader({ onRefresh, refreshing = false, mainTab, onTabChange
                   'cluster',
                   'nodes',
                   'indices',
+                  'shards',
                   'templates',
                   'snapshots'
                 ] as const

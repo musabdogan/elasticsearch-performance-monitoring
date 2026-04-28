@@ -96,6 +96,11 @@ export function formatAlertValue(value: number | string, unit: string): string {
   if (unit === 'ms' && n >= 1000) {
     return `${(n / 1000).toFixed(1)} s`;
   }
+  if (unit === 'ms') {
+    const decimals = n < 1 ? 2 : n < 10 ? 2 : n < 100 ? 1 : 0;
+    const formatted = n.toFixed(decimals).replace(/\.?0+$/, '');
+    return `${formatted} ms`;
+  }
   if (unit === '%') return `${Math.round(n)}%`;
   // Rate (ops/sec, /sec): human-friendly decimals instead of raw float
   if (unit === 'ops/sec' || unit === '/sec') {

@@ -55,6 +55,7 @@ function CodeBlockWithCopy({ text, label }: { text: string; label: string }) {
 }
 
 const TABLE_ID = 'snapshots';
+const SNAPSHOT_DETAIL_POLL_MS = 10_000;
 
 type SortDirection = 'asc' | 'desc' | null;
 type SnapshotSortKey = keyof CatSnapshotRow;
@@ -172,6 +173,80 @@ function formatMillisDateTime(ms: number | undefined): string {
   const datePart = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
   const timePart = d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true, timeZoneName: 'short' });
   return `${datePart} ${timePart}`;
+}
+
+function clampPercent(value: number): number {
+  if (!Number.isFinite(value)) return 0;
+  return Math.max(0, Math.min(100, value));
+}
+
+function formatDurationMsHumanReadable(ms: number | null | undefined): string {
+  if (ms == null) return '—';
+  const value = Number(ms);
+  if (!Number.isFinite(value) || value < 0) return '—';
+  if (value < 60_000) {
+    const sec = Math.max(0, Math.round(value / 1000));
+    return sec === 1 ? '1 second' : `${sec} seconds`;
+  }
+  const totalMinutes = Math.max(0, Math.round(value / 60_000));
+  const days = Math.floor(totalMinutes / (60 * 24));
+  const hours = Math.floor((totalMinutes % (60 * 24)) / 60);
+  const minutes = totalMinutes % 60;
+
+  const parts: string[] = [];
+  if (days > 0) parts.push(`${days} day${days === 1 ? '' : 's'}`);
+  if (hours > 0) parts.push(`${hours} hour${hours === 1 ? '' : 's'}`);
+  if (minutes > 0) parts.push(`${minutes} minute${minutes === 1 ? '' : 's'}`);
+  return parts.length > 0 ? parts.join(' ') : '0 minutes';
+}
+
+function getSnapshotCompletedStats(detail: SnapshotStatusEntry | null): {
+  pct: number | null;
+  processedBytes: number | null;
+  totalBytes: number | null;
+} {
+  if (!detail) return { pct: null, processedBytes: null, totalBytes: null };
+  const processedBytes = Number((detail as any)?.stats?.processed?.size_in_bytes ?? NaN);
+  const incrementalBytes = Number((detail as any)?.stats?.incremental?.size_in_bytes ?? NaN);
+  const totalBytes = Number((detail as any)?.stats?.total?.size_in_bytes ?? NaN);
+  const denom = (Number.isFinite(incrementalBytes) && incrementalBytes > 0)
+    ? incrementalBytes
+    : (Number.isFinite(totalBytes) && totalBytes > 0 ? totalBytes : NaN);
+
+  // User expectation / ES behavior in some versions: processed.* may be missing for completed snapshots.
+  // If processed is missing, treat the snapshot as completed (100%).
+  // When we have a denominator (incremental or total), show processed as denom to render "X / X".
+  if (!Number.isFinite(processedBytes)) {
+    const denomValue = Number.isFinite(denom) && denom > 0 ? denom : null;
+    return {
+      pct: 100,
+      processedBytes: denomValue,
+      totalBytes: denomValue
+    };
+  }
+
+  if (!Number.isFinite(denom) || denom <= 0) {
+    return { pct: null, processedBytes, totalBytes: null };
+  }
+  const pct = clampPercent((processedBytes / denom) * 100);
+  return { pct, processedBytes, totalBytes: denom };
+}
+
+function getSnapshotEstimatedRemaining(detail: SnapshotStatusEntry | null): {
+  remainingMs: number | null;
+  etaMs: number | null;
+} {
+  if (!detail) return { remainingMs: null, etaMs: null };
+  const completed = getSnapshotCompletedStats(detail);
+  const pct = completed.pct;
+  const elapsedMs = Number((detail as any)?.stats?.time_in_millis ?? NaN);
+  if (!Number.isFinite(elapsedMs) || elapsedMs <= 0) return { remainingMs: null, etaMs: null };
+  if (pct == null || !Number.isFinite(pct) || pct <= 0 || pct >= 100) return { remainingMs: null, etaMs: null };
+
+  const fraction = pct / 100;
+  const remainingMs = Math.max(0, elapsedMs * (1 / fraction - 1));
+  const etaMs = Date.now() + remainingMs;
+  return { remainingMs, etaMs };
 }
 
 function buildSnapshotIndexRows(detail: SnapshotStatusEntry): SnapshotIndexStatusRow[] {
@@ -366,6 +441,8 @@ export function SnapshotsTabContent(
   const [snapshotIndexSearchTerm, setSnapshotIndexSearchTerm] = useState('');
   const snapshotStatusCacheRef = useRef<Record<string, SnapshotStatusEntry>>({});
   const snapshotDetailRequestKeyRef = useRef<string | null>(null);
+  const snapshotDetailPollInFlightRef = useRef(false);
+  const snapshotDetailPollAbortRef = useRef<AbortController | null>(null);
 
   const snapshotCurlSnippet = useMemo(
     () => getSnapshotCurlSnippet(activeCluster?.baseUrl ?? 'https://your-cluster:9200'),
@@ -375,6 +452,8 @@ export function SnapshotsTabContent(
     () => (snapshotDetail ? extractSnapshotFailedShards(snapshotDetail) : []),
     [snapshotDetail]
   );
+  const snapshotCompleted = useMemo(() => getSnapshotCompletedStats(snapshotDetail), [snapshotDetail]);
+  const snapshotEta = useMemo(() => getSnapshotEstimatedRemaining(snapshotDetail), [snapshotDetail]);
   const snapshotIndexRows = useMemo(
     () => (snapshotDetail ? buildSnapshotIndexRows(snapshotDetail) : []),
     [snapshotDetail]
@@ -402,7 +481,10 @@ export function SnapshotsTabContent(
     snapshotDetailRequestKeyRef.current = cacheKey;
 
     const cachedStatus = snapshotStatusCacheRef.current[cacheKey];
-    if (cachedStatus) {
+    const cachedProcessedBytes = Number((cachedStatus as any)?.stats?.processed?.size_in_bytes ?? NaN);
+    // If cache was created before we started requesting snapshots.stats.processed.*, it won't have "processed" fields.
+    // Treat that as a cache miss so we refetch and the Completed % can render.
+    if (cachedStatus && Number.isFinite(cachedProcessedBytes)) {
       setSnapshotDetail(cachedStatus);
       setSnapshotDetailLoading(false);
       return;
@@ -410,8 +492,14 @@ export function SnapshotsTabContent(
 
     setSnapshotDetailLoading(true);
     setSnapshotDetail(null);
+    // Prevent the 10s poll from starting overlapping requests while initial load is in progress.
+    snapshotDetailPollInFlightRef.current = true;
+    let controller: AbortController | null = null;
     try {
-      const res = await getSnapshotStatus(cluster, repository, snapshot);
+      snapshotDetailPollAbortRef.current?.abort();
+      controller = new AbortController();
+      snapshotDetailPollAbortRef.current = controller;
+      const res = await getSnapshotStatus(cluster, repository, snapshot, controller.signal);
       if (snapshotDetailRequestKeyRef.current !== cacheKey) return;
       const first = res.snapshots?.[0];
       if (!first) {
@@ -422,15 +510,20 @@ export function SnapshotsTabContent(
         setSnapshotDetail(first);
       }
     } catch (e) {
+      if (controller?.signal.aborted) return;
       if (snapshotDetailRequestKeyRef.current !== cacheKey) return;
       const msg = e instanceof Error ? e.message : '';
       const isTimeoutOrNetwork = msg.toLowerCase().includes('timeout') || msg.toLowerCase().includes('network');
       setSnapshotDetailError(isTimeoutOrNetwork ? getNetworkErrorMessage(cluster.baseUrl) : (msg || 'Failed to load snapshot detail'));
       setSnapshotDetail(null);
     } finally {
+      if (snapshotDetailPollAbortRef.current === controller) {
+        snapshotDetailPollAbortRef.current = null;
+      }
       if (snapshotDetailRequestKeyRef.current === cacheKey) {
         setSnapshotDetailLoading(false);
       }
+      snapshotDetailPollInFlightRef.current = false;
     }
   }, []);
 
@@ -440,6 +533,58 @@ export function SnapshotsTabContent(
     setSnapshotGlobalStateInfoOpen(false);
     setSnapshotIndexSearchTerm('');
   }, []);
+
+  // Auto-refresh: while snapshot detail popup is open, re-fetch status every 10s.
+  useEffect(() => {
+    if (!snapshotDetailOpen) return;
+    // Don't start the 10s polling loop until the initial detail request completes.
+    if (snapshotDetailLoading) return;
+    const cluster = activeClusterRef.current;
+    const target = snapshotDetailTarget;
+    if (!cluster || !target?.repository || !target?.snapshot) return;
+
+    const cacheKey = `${target.repository}/${target.snapshot}`;
+
+    const tick = async () => {
+      if (!snapshotDetailOpen) return;
+      if (snapshotDetailRequestKeyRef.current !== cacheKey) return;
+      if (snapshotDetailPollInFlightRef.current) return;
+
+      snapshotDetailPollInFlightRef.current = true;
+      snapshotDetailPollAbortRef.current?.abort();
+      const controller = new AbortController();
+      snapshotDetailPollAbortRef.current = controller;
+      try {
+        const res = await getSnapshotStatus(cluster, target.repository, target.snapshot, controller.signal);
+        if (snapshotDetailRequestKeyRef.current !== cacheKey) return;
+        const first = res.snapshots?.[0];
+        if (!first) return;
+        snapshotStatusCacheRef.current[cacheKey] = first;
+        setSnapshotDetail(first);
+        setSnapshotDetailError(null);
+      } catch (e) {
+        if (controller.signal.aborted) return;
+        if (snapshotDetailRequestKeyRef.current !== cacheKey) return;
+        const msg = e instanceof Error ? e.message : '';
+        const isTimeoutOrNetwork = msg.toLowerCase().includes('timeout') || msg.toLowerCase().includes('network');
+        setSnapshotDetailError(isTimeoutOrNetwork ? getNetworkErrorMessage(cluster.baseUrl) : (msg || 'Failed to refresh snapshot detail'));
+      } finally {
+        if (snapshotDetailPollAbortRef.current === controller) {
+          snapshotDetailPollAbortRef.current = null;
+        }
+        snapshotDetailPollInFlightRef.current = false;
+      }
+    };
+
+    // Start polling after opening (avoid double-call: openSnapshotDetail already fetches immediately).
+    const intervalId = window.setInterval(tick, SNAPSHOT_DETAIL_POLL_MS);
+    return () => {
+      window.clearInterval(intervalId);
+      snapshotDetailPollAbortRef.current?.abort();
+      snapshotDetailPollAbortRef.current = null;
+      snapshotDetailPollInFlightRef.current = false;
+    };
+  }, [snapshotDetailOpen, snapshotDetailTarget, snapshotDetailLoading, clusterKey]);
 
   useEffect(() => {
     if (!snapshotDetailOpen) return;
@@ -1240,6 +1385,29 @@ export function SnapshotsTabContent(
                           <p className="text-[11px] text-gray-500 dark:text-gray-400">Duration</p>
                           <p className="text-sm font-medium text-gray-900 dark:text-gray-100">
                             {formatDurationMsToHoursMinutes(Number(snapshotDetail.stats?.time_in_millis ?? NaN))}
+                          </p>
+                        </div>
+                        <div className="rounded border border-gray-200 bg-gray-50 px-3 py-2 dark:border-gray-700 dark:bg-gray-900/30">
+                          <p className="text-[11px] text-gray-500 dark:text-gray-400">Completed</p>
+                          <p className="text-sm font-medium text-gray-900 dark:text-gray-100">
+                            {snapshotCompleted.pct == null ? '—' : `${snapshotCompleted.pct.toFixed(snapshotCompleted.pct < 10 ? 2 : 1)}%`}
+                          </p>
+                          <div className="mt-1 h-1.5 w-full rounded bg-gray-200 dark:bg-gray-700 overflow-hidden" aria-hidden>
+                            <div
+                              className="h-full bg-emerald-500 dark:bg-emerald-400"
+                              style={{ width: `${snapshotCompleted.pct ?? 0}%` }}
+                            />
+                          </div>
+                          <p className="text-[11px] text-gray-500 dark:text-gray-400 mt-1">
+                            {snapshotCompleted.processedBytes == null
+                              ? 'Processed: —'
+                              : `Processed: ${formatBytesToHumanReadable(snapshotCompleted.processedBytes)}`}
+                            {snapshotCompleted.totalBytes == null
+                              ? ''
+                              : ` / ${formatBytesToHumanReadable(snapshotCompleted.totalBytes)}`}
+                          </p>
+                          <p className="text-[11px] text-gray-500 dark:text-gray-400 mt-1">
+                            Remaining: {snapshotEta.remainingMs == null ? '—' : formatDurationMsHumanReadable(snapshotEta.remainingMs)}
                           </p>
                         </div>
                         <div className="rounded border border-gray-200 bg-gray-50 px-3 py-2 dark:border-gray-700 dark:bg-gray-900/30">

@@ -8,6 +8,7 @@ import { ClusterTabContent } from '@/components/tabs/ClusterTabContent';
 import { IndexingSearchTabContent } from '@/components/tabs/IndexingSearchTabContent';
 import { IndicesTabContent } from '@/components/tabs/IndicesTabContent';
 import { NodesTabContent } from '@/components/tabs/NodesTabContent';
+import { ShardsTabContent } from '@/components/tabs/ShardsTabContent';
 import { SnapshotsTabContent } from '@/components/tabs/SnapshotsTabContent';
 import { TemplatesTabContent } from '@/components/tabs/TemplatesTabContent';
 import { useMonitoring } from '@/context/MonitoringProvider';
@@ -26,6 +27,7 @@ const TAB_REFRESH_EVENTS: Record<Exclude<MainTab, 'indexing-search'>, string> = 
   cluster: 'refreshCluster',
   nodes: 'refreshNodes',
   indices: 'refreshIndices',
+  shards: 'refreshShards',
   templates: 'refreshTemplates',
   snapshots: 'refreshSnapshots'
 };
@@ -583,6 +585,12 @@ export default function App() {
               {mainTab === 'cluster' && <ClusterTabContent onRefreshStateChange={setTabRefreshing} />}
               {mainTab === 'nodes' && <NodesTabContent onRefreshStateChange={setTabRefreshing} />}
               {mainTab === 'indices' && <IndicesTabContent onRefreshStateChange={setTabRefreshing} />}
+              {mainTab === 'shards' && (
+                <ShardsTabContent
+                  onRefreshStateChange={setTabRefreshing}
+                  onOpenIndexDetails={(indexName) => setGlobalIndexModalIndex(indexName)}
+                />
+              )}
               {mainTab === 'templates' && <TemplatesTabContent onRefreshStateChange={setTabRefreshing} />}
               {mainTab === 'snapshots' && (
                 <SnapshotsTabContent
