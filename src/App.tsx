@@ -12,7 +12,8 @@ import { SnapshotsTabContent } from '@/components/tabs/SnapshotsTabContent';
 import { TemplatesTabContent } from '@/components/tabs/TemplatesTabContent';
 import { useMonitoring } from '@/context/MonitoringProvider';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { X, Copy, Check } from 'lucide-react';
+import { X, Copy, Check, HelpCircle } from 'lucide-react';
+import { GettingStartedTour } from '@/components/onboarding/GettingStartedTour';
 
 type WelcomeTab = 'apis' | 'monitoring-user';
 
@@ -81,8 +82,8 @@ function CodeBlockWithCopy({ text, label }: { text: string; label: string }) {
 }
 
 function WelcomeScreen({ onClose }: { onClose?: () => void }) {
-  const { activeCluster } = useMonitoring();
-  const [activeTab, setActiveTab] = useState<WelcomeTab>('apis');
+  const { activeCluster, clusters } = useMonitoring();
+  const [activeTab, setActiveTab] = useState<WelcomeTab>('monitoring-user');
   const clusterBaseUrl = activeCluster?.baseUrl?.replace(/\/$/, '') ?? 'https://localhost:9200';
   const curlSnippet = useMemo(() => getCurlSnippet(clusterBaseUrl), [clusterBaseUrl]);
 
@@ -151,6 +152,7 @@ function WelcomeScreen({ onClose }: { onClose?: () => void }) {
                   onClick={() => {
                     window.dispatchEvent(new CustomEvent('openClusterSelector'));
                   }}
+                  data-tour="add-cluster"
                   className="inline-flex items-center gap-3 px-6 py-3.5 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-xl shadow-lg hover:shadow-xl transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 dark:focus:ring-offset-gray-900"
                 >
                   <div className="relative w-5 h-5 flex-shrink-0 flex items-center justify-center">
@@ -161,6 +163,19 @@ function WelcomeScreen({ onClose }: { onClose?: () => void }) {
                   Add Elasticsearch Cluster
                 </button>
               </div>
+              {clusters.length === 0 && (
+                <div className="flex justify-center">
+                  <button
+                    type="button"
+                    onClick={() => window.dispatchEvent(new CustomEvent('startGettingStartedTour'))}
+                    className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-gray-200 bg-white text-gray-700 hover:bg-gray-50 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700 transition-colors text-xs"
+                    title="Start guided tour"
+                  >
+                    <HelpCircle className="h-4 w-4 text-gray-500 dark:text-gray-400" />
+                    Start tour
+                  </button>
+                </div>
+              )}
               <div className="rounded-lg bg-gray-100 dark:bg-gray-800 px-4 py-3 text-left">
                 <p className="text-xs font-semibold text-gray-700 dark:text-gray-300 mb-2">Get started in 3 steps</p>
                 <ol className="text-xs text-gray-600 dark:text-gray-400 space-y-1 list-decimal list-inside">
@@ -177,6 +192,19 @@ function WelcomeScreen({ onClose }: { onClose?: () => void }) {
               <div className="flex border-b border-gray-200 dark:border-gray-700 min-w-0">
             <button
               type="button"
+              onClick={() => setActiveTab('monitoring-user')}
+              className={`flex-1 min-w-0 px-3 py-3 text-xs sm:text-sm font-medium transition-colors truncate ${
+                activeTab === 'monitoring-user'
+                  ? 'bg-blue-50 text-blue-700 dark:bg-blue-900/20 dark:text-blue-300 border-b-2 border-blue-500'
+                  : 'text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700/50'
+              }`}
+              data-tour="monitoring-user-tab"
+              title="Dedicated Monitoring User (optional)"
+            >
+              Monitoring User (optional)
+            </button>
+            <button
+              type="button"
               onClick={() => setActiveTab('apis')}
               className={`flex-1 min-w-0 px-3 py-3 text-xs sm:text-sm font-medium transition-colors truncate ${
                 activeTab === 'apis'
@@ -185,18 +213,6 @@ function WelcomeScreen({ onClose }: { onClose?: () => void }) {
               }`}
             >
               Elasticsearch Monitoring APIs
-            </button>
-            <button
-              type="button"
-              onClick={() => setActiveTab('monitoring-user')}
-              className={`flex-1 min-w-0 px-3 py-3 text-xs sm:text-sm font-medium transition-colors truncate ${
-                activeTab === 'monitoring-user'
-                  ? 'bg-blue-50 text-blue-700 dark:bg-blue-900/20 dark:text-blue-300 border-b-2 border-blue-500'
-                  : 'text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700/50'
-              }`}
-              title="Dedicated Monitoring User (optional)"
-            >
-              Monitoring User (optional)
             </button>
               </div>
               <div className="p-6 text-left min-w-0 flex flex-col min-h-0">
@@ -228,7 +244,7 @@ function WelcomeScreen({ onClose }: { onClose?: () => void }) {
               </>
             )}
             {activeTab === 'monitoring-user' && (
-              <div className="space-y-4 text-xs text-gray-700 dark:text-gray-300 break-words min-w-0">
+              <div className="space-y-4 text-xs text-gray-700 dark:text-gray-300 break-words min-w-0" data-tour="monitoring-user-content">
                 <p className="break-words">
                   To maintain a secure cluster, it is a best practice to create a dedicated user for health checks and metric collection rather than using a superuser account.
                 </p>
@@ -393,6 +409,7 @@ export default function App() {
 
   return (
     <main className={`w-full h-screen overflow-hidden flex flex-col ${statusBgClass}`}>
+      <GettingStartedTour />
       <PageHeader
         onRefresh={handleRefresh}
         refreshing={refreshing || tabRefreshing}
@@ -567,7 +584,13 @@ export default function App() {
               {mainTab === 'nodes' && <NodesTabContent onRefreshStateChange={setTabRefreshing} />}
               {mainTab === 'indices' && <IndicesTabContent onRefreshStateChange={setTabRefreshing} />}
               {mainTab === 'templates' && <TemplatesTabContent onRefreshStateChange={setTabRefreshing} />}
-              {mainTab === 'snapshots' && <SnapshotsTabContent onRefreshStateChange={setTabRefreshing} />}
+              {mainTab === 'snapshots' && (
+                <SnapshotsTabContent
+                  onRefreshStateChange={setTabRefreshing}
+                  onOpenIndexDetails={(indexName) => setGlobalIndexModalIndex(indexName)}
+                  isIndexDetailModalOpen={globalIndexModalIndex != null}
+                />
+              )}
             </div>
             <IndicesTabContent
               modalOnly

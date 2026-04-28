@@ -67,7 +67,7 @@ export function PageHeader({ onRefresh, refreshing = false, mainTab, onTabChange
             </button>
           )}
           {/* Clusters */}
-          <div>
+          <div data-tour="cluster-selector">
             <ClusterSelector />
           </div>
         </div>
@@ -97,6 +97,7 @@ export function PageHeader({ onRefresh, refreshing = false, mainTab, onTabChange
                   key={tab}
                   type="button"
                   onClick={() => onTabChange(tab)}
+                  data-tour={tab === 'indices' ? 'tab-indices' : tab === 'snapshots' ? 'tab-snapshots' : undefined}
                   className={`px-2.5 py-1.5 text-xs font-medium transition-colors ${
                     mainTab === tab
                       ? 'bg-blue-600 text-white dark:bg-blue-500'
@@ -115,6 +116,7 @@ export function PageHeader({ onRefresh, refreshing = false, mainTab, onTabChange
               onClick={onRefresh}
               disabled={refreshDisabled}
               title={refreshTitle}
+              data-tour="refresh"
               className="flex items-center gap-1 p-2 rounded-lg text-gray-500 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
             >
               <RefreshCw className={`h-5 w-5 ${refreshing ? 'animate-spin' : ''}`} />

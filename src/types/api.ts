@@ -425,6 +425,75 @@ export interface SnapshotAllResponse {
   remaining?: number;
 }
 
+/** GET _snapshot/{repo}/{snapshot}/_status shard entry. */
+export interface SnapshotStatusShard {
+  stage?: string;
+  reason?: string;
+  stats?: {
+    start_time_in_millis?: number;
+    time_in_millis?: number;
+    incremental?: { file_count?: number; size_in_bytes?: number };
+    total?: { file_count?: number; size_in_bytes?: number };
+  };
+}
+
+/** GET _snapshot/{repo}/{snapshot}/_status index entry. */
+export interface SnapshotStatusIndex {
+  shards?: Record<string, SnapshotStatusShard>;
+  shards_stats?: {
+    initializing?: number;
+    started?: number;
+    finalizing?: number;
+    done?: number;
+    failed?: number;
+    total?: number;
+  };
+}
+
+/** GET _snapshot/{repo}/{snapshot}/_status snapshot entry. */
+export interface SnapshotStatusEntry {
+  snapshot: string;
+  repository?: string;
+  state?: string;
+  include_global_state?: boolean;
+  shards_stats?: {
+    initializing?: number;
+    started?: number;
+    finalizing?: number;
+    done?: number;
+    failed?: number;
+    total?: number;
+  };
+  stats?: {
+    start_time_in_millis?: number;
+    time_in_millis?: number;
+    incremental?: {
+      file_count?: number;
+      size_in_bytes?: number;
+    };
+    total?: {
+      file_count?: number;
+      size_in_bytes?: number;
+    };
+  };
+  indices?: Record<string, SnapshotStatusIndex>;
+}
+
+/** GET _snapshot/{repo}/{snapshot}/_status response. */
+export interface SnapshotStatusResponse {
+  snapshots?: SnapshotStatusEntry[];
+}
+
+/** GET _snapshot/{repo}/_verify node entry. */
+export interface SnapshotRepositoryVerifyNode {
+  name?: string;
+}
+
+/** GET _snapshot/{repo}/_verify response. */
+export interface SnapshotRepositoryVerifyResponse {
+  nodes?: Record<string, SnapshotRepositoryVerifyNode>;
+}
+
 // Nodes tab: _nodes/stats/transport,http,breaker,fs,indices (extended stats)
 export interface NodesStatsExtendedResponse {
   nodes?: Record<string, NodeStatsExtendedEntry>;

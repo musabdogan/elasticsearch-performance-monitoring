@@ -1,8 +1,8 @@
 import { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { useMonitoring } from '@/context/MonitoringProvider';
-import { getSnapshotRepositories, getSnapshotAll, getSnapshotAllFromAllRepos, getNetworkErrorMessage } from '@/services/elasticsearch';
-import type { CatSnapshotRow, SnapshotFailure, SnapshotInfo } from '@/types/api';
+import { getSnapshotRepositories, getSnapshotAll, getSnapshotAllFromAllRepos, getSnapshotStatus, getNetworkErrorMessage } from '@/services/elasticsearch';
+import type { CatSnapshotRow, SnapshotFailure, SnapshotInfo, SnapshotStatusEntry } from '@/types/api';
 import { DataTable } from '@/components/data/DataTable';
 import Pagination from '@/components/data/Pagination';
 import { InfoPopup } from '@/components/ui/InfoPopup';
@@ -60,6 +60,162 @@ type SortDirection = 'asc' | 'desc' | null;
 type SnapshotSortKey = keyof CatSnapshotRow;
 
 const NUMERIC_SNAPSHOT_KEYS: SnapshotSortKey[] = ['start_epoch', 'end_epoch', 'indices', 'data_streams', 'successful_shards', 'failed_shards', 'total_shards', 'remaining_shards'];
+
+function isForbiddenError(message: string): boolean {
+  const lower = message.toLowerCase();
+  return message.includes('403') || lower.includes('forbidden');
+}
+
+function normalizeSnapshotStatus(status: string | undefined): string {
+  const value = (status ?? '').trim().toUpperCase();
+  return value || 'UNKNOWN';
+}
+
+function getSnapshotStatusPresentation(status: string | undefined): { label: string; className: string; isBadge: boolean } {
+  const normalized = normalizeSnapshotStatus(status);
+  if (normalized === 'SUCCESS') {
+    // SUCCESS intentionally stays neutral.
+    return {
+      label: normalized,
+      isBadge: false,
+      className: 'tab-content-value font-medium text-gray-700 dark:text-gray-200'
+    };
+  }
+  if (normalized === 'IN_PROGRESS' || normalized === 'STARTED') {
+    return {
+      label: normalized,
+      isBadge: false,
+      className: 'tab-content-value font-semibold text-blue-700 dark:text-blue-300'
+    };
+  }
+  if (normalized === 'PARTIAL') {
+    return {
+      label: normalized,
+      isBadge: false,
+      className: 'tab-content-value font-semibold text-amber-700 dark:text-amber-300'
+    };
+  }
+  if (normalized === 'FAILED' || normalized === 'FAILURE') {
+    return {
+      label: normalized,
+      isBadge: false,
+      className: 'tab-content-value font-semibold text-red-700 dark:text-red-300'
+    };
+  }
+  if (normalized === 'ABORTED') {
+    return {
+      label: normalized,
+      isBadge: false,
+      className: 'tab-content-value font-semibold text-violet-700 dark:text-violet-300'
+    };
+  }
+  if (normalized === 'INCOMPATIBLE') {
+    return {
+      label: normalized,
+      isBadge: false,
+      className: 'tab-content-value font-semibold text-gray-700 dark:text-gray-200'
+    };
+  }
+  return {
+    label: normalized,
+    isBadge: false,
+    className: 'tab-content-value font-semibold text-cyan-700 dark:text-cyan-300'
+  };
+}
+
+function extractSnapshotFailedShards(detail: SnapshotStatusEntry): Array<{ index: string; shard: string; stage: string; reason: string }> {
+  const out: Array<{ index: string; shard: string; stage: string; reason: string }> = [];
+  const indices = detail.indices ?? {};
+  Object.entries(indices).forEach(([indexName, indexEntry]) => {
+    const shards = indexEntry?.shards ?? {};
+    Object.entries(shards).forEach(([shardId, shard]) => {
+      const stage = normalizeSnapshotStatus(shard?.stage);
+      const reason = typeof shard?.reason === 'string' ? shard.reason.trim() : '';
+      if (stage === 'FAILURE' || stage === 'FAILED' || reason.length > 0) {
+        out.push({
+          index: indexName,
+          shard: shardId,
+          stage,
+          reason: reason || 'No reason returned by API.'
+        });
+      }
+    });
+  });
+  return out;
+}
+
+type SnapshotIndexStatusRow = {
+  index: string;
+  status: string;
+  done: number;
+  failed: number;
+  total: number;
+  primaryReason: string | null;
+};
+
+function formatBytesToHumanReadable(bytes: number | undefined): string {
+  if (!Number.isFinite(bytes)) return '—';
+  const value = Number(bytes);
+  if (value <= 0) return '0 B';
+  const units = ['B', 'KB', 'MB', 'GB', 'TB', 'PB'];
+  const power = Math.min(Math.floor(Math.log(value) / Math.log(1024)), units.length - 1);
+  const normalized = value / Math.pow(1024, power);
+  if (power === 0) return `${Math.round(normalized)} ${units[power]}`;
+  const text = normalized.toFixed(1).replace(/\.0$/, '');
+  return `${text} ${units[power]}`;
+}
+
+function formatMillisDateTime(ms: number | undefined): string {
+  if (!Number.isFinite(ms)) return '—';
+  const d = new Date(Number(ms));
+  if (Number.isNaN(d.getTime())) return '—';
+  const datePart = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  const timePart = d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true, timeZoneName: 'short' });
+  return `${datePart} ${timePart}`;
+}
+
+function buildSnapshotIndexRows(detail: SnapshotStatusEntry): SnapshotIndexStatusRow[] {
+  const rows: SnapshotIndexStatusRow[] = [];
+  const indices = detail.indices ?? {};
+  Object.entries(indices).forEach(([indexName, indexEntry]) => {
+    const shardMap = indexEntry?.shards ?? {};
+    const shards = Object.values(shardMap);
+    const doneFromStages = shards.filter((s) => normalizeSnapshotStatus(s?.stage) === 'DONE').length;
+    const failedShards = shards.filter((s) => {
+      const stage = normalizeSnapshotStatus(s?.stage);
+      const reason = typeof s?.reason === 'string' ? s.reason.trim() : '';
+      return stage === 'FAILURE' || stage === 'FAILED' || reason.length > 0;
+    });
+    const total = Number(indexEntry?.shards_stats?.total ?? shards.length ?? 0);
+    const done = Number(indexEntry?.shards_stats?.done ?? doneFromStages);
+    const failed = Number(indexEntry?.shards_stats?.failed ?? failedShards.length);
+
+    let status = 'IN_PROGRESS';
+    if (failed > 0 && done > 0) status = 'PARTIAL';
+    else if (failed > 0) status = 'FAILED';
+    else if (total > 0 && done >= total) status = 'SUCCESS';
+
+    const firstReason = failedShards
+      .map((s) => (typeof s.reason === 'string' ? s.reason.trim() : ''))
+      .find((reason) => reason.length > 0);
+
+    rows.push({
+      index: indexName,
+      status,
+      done,
+      failed,
+      total,
+      primaryReason: firstReason ?? null
+    });
+  });
+
+  return rows.sort((a, b) => {
+    if (b.failed !== a.failed) return b.failed - a.failed;
+    if (a.failed > 0 && b.failed === 0) return -1;
+    if (b.failed > 0 && a.failed === 0) return 1;
+    return a.index.localeCompare(b.index);
+  });
+}
 
 /** Normalize GET _snapshot/repo/_all snapshot entry to table row. */
 function snapshotToRow(info: SnapshotInfo, repoName: string): CatSnapshotRow {
@@ -166,7 +322,17 @@ function getSnapshotSortValue(r: CatSnapshotRow, key: SnapshotSortKey): string |
   return String(raw).toLowerCase();
 }
 
-export function SnapshotsTabContent({ onRefreshStateChange }: { onRefreshStateChange?: (loading: boolean) => void } = {}) {
+export function SnapshotsTabContent(
+  {
+    onRefreshStateChange,
+    onOpenIndexDetails,
+    isIndexDetailModalOpen
+  }: {
+    onRefreshStateChange?: (loading: boolean) => void;
+    onOpenIndexDetails?: (indexName: string) => void;
+    isIndexDetailModalOpen?: boolean;
+  } = {}
+) {
   const { activeCluster } = useMonitoring();
   const activeClusterRef = useRef(activeCluster);
   activeClusterRef.current = activeCluster;
@@ -191,11 +357,101 @@ export function SnapshotsTabContent({ onRefreshStateChange }: { onRefreshStateCh
   const [dataStreamsPopoverAnchor, setDataStreamsPopoverAnchor] = useState<{ top: number; right: number; bottom: number; left: number } | null>(null);
   const [openFailuresKey, setOpenFailuresKey] = useState<string | null>(null);
   const [failuresPopoverAnchor, setFailuresPopoverAnchor] = useState<{ top: number; right: number; bottom: number; left: number } | null>(null);
+  const [snapshotDetailOpen, setSnapshotDetailOpen] = useState(false);
+  const [snapshotDetailTarget, setSnapshotDetailTarget] = useState<{ repository: string; snapshot: string } | null>(null);
+  const [snapshotDetailLoading, setSnapshotDetailLoading] = useState(false);
+  const [snapshotDetailError, setSnapshotDetailError] = useState<string | null>(null);
+  const [snapshotDetail, setSnapshotDetail] = useState<SnapshotStatusEntry | null>(null);
+  const [snapshotGlobalStateInfoOpen, setSnapshotGlobalStateInfoOpen] = useState(false);
+  const [snapshotIndexSearchTerm, setSnapshotIndexSearchTerm] = useState('');
+  const snapshotStatusCacheRef = useRef<Record<string, SnapshotStatusEntry>>({});
+  const snapshotDetailRequestKeyRef = useRef<string | null>(null);
 
   const snapshotCurlSnippet = useMemo(
     () => getSnapshotCurlSnippet(activeCluster?.baseUrl ?? 'https://your-cluster:9200'),
     [activeCluster?.baseUrl]
   );
+  const snapshotFailedShards = useMemo(
+    () => (snapshotDetail ? extractSnapshotFailedShards(snapshotDetail) : []),
+    [snapshotDetail]
+  );
+  const snapshotIndexRows = useMemo(
+    () => (snapshotDetail ? buildSnapshotIndexRows(snapshotDetail) : []),
+    [snapshotDetail]
+  );
+  const filteredSnapshotIndexRows = useMemo(() => {
+    const term = snapshotIndexSearchTerm.trim().toLowerCase();
+    if (!term) return snapshotIndexRows;
+    return snapshotIndexRows.filter((row) => {
+      const indexHit = row.index.toLowerCase().includes(term);
+      const reasonHit = (row.primaryReason ?? '').toLowerCase().includes(term);
+      return indexHit || reasonHit;
+    });
+  }, [snapshotIndexRows, snapshotIndexSearchTerm]);
+
+  const openSnapshotDetail = useCallback(async (row: CatSnapshotRow) => {
+    const cluster = activeClusterRef.current;
+    const repository = (row.repository ?? '').trim();
+    const snapshot = (row.id ?? '').trim();
+    if (!cluster || !repository || !snapshot) return;
+    const cacheKey = `${repository}/${snapshot}`;
+    setSnapshotDetailOpen(true);
+    setSnapshotDetailTarget({ repository, snapshot });
+    setSnapshotDetailError(null);
+    setSnapshotIndexSearchTerm('');
+    snapshotDetailRequestKeyRef.current = cacheKey;
+
+    const cachedStatus = snapshotStatusCacheRef.current[cacheKey];
+    if (cachedStatus) {
+      setSnapshotDetail(cachedStatus);
+      setSnapshotDetailLoading(false);
+      return;
+    }
+
+    setSnapshotDetailLoading(true);
+    setSnapshotDetail(null);
+    try {
+      const res = await getSnapshotStatus(cluster, repository, snapshot);
+      if (snapshotDetailRequestKeyRef.current !== cacheKey) return;
+      const first = res.snapshots?.[0];
+      if (!first) {
+        setSnapshotDetailError('No detailed snapshot status returned by API.');
+        setSnapshotDetail(null);
+      } else {
+        snapshotStatusCacheRef.current[cacheKey] = first;
+        setSnapshotDetail(first);
+      }
+    } catch (e) {
+      if (snapshotDetailRequestKeyRef.current !== cacheKey) return;
+      const msg = e instanceof Error ? e.message : '';
+      const isTimeoutOrNetwork = msg.toLowerCase().includes('timeout') || msg.toLowerCase().includes('network');
+      setSnapshotDetailError(isTimeoutOrNetwork ? getNetworkErrorMessage(cluster.baseUrl) : (msg || 'Failed to load snapshot detail'));
+      setSnapshotDetail(null);
+    } finally {
+      if (snapshotDetailRequestKeyRef.current === cacheKey) {
+        setSnapshotDetailLoading(false);
+      }
+    }
+  }, []);
+
+  const closeSnapshotDetail = useCallback(() => {
+    setSnapshotDetailOpen(false);
+    snapshotDetailRequestKeyRef.current = null;
+    setSnapshotGlobalStateInfoOpen(false);
+    setSnapshotIndexSearchTerm('');
+  }, []);
+
+  useEffect(() => {
+    if (!snapshotDetailOpen) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      // When index detail modal is open, let its own Escape handler close first.
+      if (isIndexDetailModalOpen) return;
+      closeSnapshotDetail();
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [snapshotDetailOpen, isIndexDetailModalOpen, closeSnapshotDetail]);
 
   const fetchSnapshots = useCallback(async () => {
     const cluster = activeClusterRef.current;
@@ -218,12 +474,33 @@ export function SnapshotsTabContent({ onRefreshStateChange }: { onRefreshStateCh
         const res = await getSnapshotAllFromAllRepos(cluster, signal);
         (res.snapshots ?? []).forEach((s) => rows.push(snapshotToRow(s, s.repository ?? '')));
       } catch {
-        // Fallback: _snapshot/_all/_all not supported (OpenSearch, ES < 7.14) — fetch per repository
-        const allResults = await Promise.all(names.map((repo) => getSnapshotAll(cluster, repo, signal)));
-        allResults.forEach((res, i) => {
+        // Fallback: _snapshot/_all/_all not supported (OpenSearch, ES < 7.14) — fetch per repository.
+        // Allow partial success so one forbidden/failed repo does not hide all snapshot data.
+        const perRepoResults = await Promise.allSettled(names.map((repo) => getSnapshotAll(cluster, repo, signal)));
+        const failedRepos: string[] = [];
+        const failedMessages: string[] = [];
+
+        perRepoResults.forEach((result, i) => {
           const repoName = names[i];
-          (res.snapshots ?? []).forEach((s) => rows.push(snapshotToRow(s, repoName)));
+          if (result.status === 'fulfilled') {
+            (result.value.snapshots ?? []).forEach((s) => rows.push(snapshotToRow(s, repoName)));
+            return;
+          }
+          failedRepos.push(repoName);
+          const reason = result.reason instanceof Error ? result.reason.message : String(result.reason ?? '');
+          failedMessages.push(reason);
         });
+
+        if (rows.length > 0) {
+          setForbidden(false);
+          if (failedRepos.length > 0) {
+            setError(`Some snapshot repositories could not be read (${failedRepos.join(', ')}). Showing available data.`);
+          } else {
+            setError(null);
+          }
+        } else if (failedMessages.length > 0) {
+          throw new Error(failedMessages[0]);
+        }
       }
       rows.sort((a, b) => {
         const aE = Number(a.start_epoch) || 0;
@@ -233,7 +510,7 @@ export function SnapshotsTabContent({ onRefreshStateChange }: { onRefreshStateCh
       setSnapshots(rows);
     } catch (e) {
       const msg = e instanceof Error ? e.message : '';
-      if (msg.includes('403') || msg.toLowerCase().includes('forbidden')) {
+      if (isForbiddenError(msg)) {
         setForbidden(true);
         setError(MONITOR_SNAPSHOT_MESSAGE);
       } else {
@@ -257,6 +534,14 @@ export function SnapshotsTabContent({ onRefreshStateChange }: { onRefreshStateCh
       setSelectedRepo('');
       setSearchTerm('');
       setCurrentPage(1);
+      setSnapshotDetailOpen(false);
+      setSnapshotDetailTarget(null);
+      setSnapshotDetail(null);
+      setSnapshotDetailError(null);
+      setSnapshotDetailLoading(false);
+      setSnapshotGlobalStateInfoOpen(false);
+      snapshotStatusCacheRef.current = {};
+      snapshotDetailRequestKeyRef.current = null;
       fetchSnapshots();
     } else {
       setRepoNames([]);
@@ -264,6 +549,14 @@ export function SnapshotsTabContent({ onRefreshStateChange }: { onRefreshStateCh
       setSnapshots([]);
       setError(null);
       setForbidden(false);
+      setSnapshotDetailOpen(false);
+      setSnapshotDetailTarget(null);
+      setSnapshotDetail(null);
+      setSnapshotDetailError(null);
+      setSnapshotDetailLoading(false);
+      setSnapshotGlobalStateInfoOpen(false);
+      snapshotStatusCacheRef.current = {};
+      snapshotDetailRequestKeyRef.current = null;
     }
   }, [clusterKey, fetchSnapshots]);
 
@@ -449,6 +742,7 @@ export function SnapshotsTabContent({ onRefreshStateChange }: { onRefreshStateCh
               <h2 className="text-sm font-semibold text-gray-900 dark:text-gray-100">Snapshots</h2>
               <InfoPopup title="Snapshots" modalTitle="Snapshots" open={infoOpen} onOpen={() => setInfoOpen(true)} onClose={() => setInfoOpen(false)}>
                 <p>Snapshots are loaded in two steps: <code className="bg-gray-100 dark:bg-gray-700 px-1 rounded">GET /_snapshot</code> (repositories), then <code className="bg-gray-100 dark:bg-gray-700 px-1 rounded">GET /_snapshot/_all/_all</code> (all snapshots from all repositories in one request). Compatible with Elasticsearch 7.14+. Requires <code className="bg-gray-100 dark:bg-gray-700 px-1 rounded">snapshot_user</code> or <code className="bg-gray-100 dark:bg-gray-700 px-1 rounded">monitor_snapshot</code> cluster privilege.</p>
+                <p className="mt-2">Click a snapshot name to load detailed shard status from <code className="bg-gray-100 dark:bg-gray-700 px-1 rounded">GET /_snapshot/{'{repo}'}/{'{snapshot}'}/_status</code>.</p>
               </InfoPopup>
               <span className="text-gray-600 dark:text-gray-400 font-normal">Repository:</span>
               <select
@@ -528,7 +822,18 @@ export function SnapshotsTabContent({ onRefreshStateChange }: { onRefreshStateCh
                       header: 'Snapshot',
                       render: (r) => (
                         <div className="flex flex-col gap-0">
-                          <span className="font-mono tab-content-value">{r.id ?? '—'}</span>
+                          {r.id && r.repository ? (
+                            <button
+                              type="button"
+                              onClick={() => openSnapshotDetail(r)}
+                              className="w-fit font-mono tab-content-value text-left text-blue-700 hover:text-blue-800 hover:underline dark:text-blue-400 dark:hover:text-blue-300"
+                              title={`Show status details for ${r.id}`}
+                            >
+                              {r.id}
+                            </button>
+                          ) : (
+                            <span className="font-mono tab-content-value">{r.id ?? '—'}</span>
+                          )}
                           {r.policy && (
                             <span className="text-[10px] text-gray-500 dark:text-gray-400 font-normal" title="Policy">{r.policy}</span>
                           )}
@@ -537,8 +842,30 @@ export function SnapshotsTabContent({ onRefreshStateChange }: { onRefreshStateCh
                       sortable: true,
                       className: 'font-mono tab-content-value'
                     },
-                    { key: 'repository', header: 'Repository', render: (r) => r.repository ?? '—', sortable: true, className: 'font-mono tab-content-value' },
-                    { key: 'status', header: 'Status', render: (r) => r.status ?? '—', sortable: true, className: 'tab-content-value' },
+                    {
+                      key: 'repository',
+                      header: 'Repository',
+                      render: (r) => {
+                        const repo = r.repository ?? '';
+                        if (!repo) return '—';
+                        return <span className="font-mono tab-content-value">{repo}</span>;
+                      },
+                      sortable: true,
+                      className: 'font-mono tab-content-value'
+                    },
+                    {
+                      key: 'status',
+                      header: 'Status',
+                      render: (r) => {
+                        const statusUi = getSnapshotStatusPresentation(r.status);
+                        if (!statusUi.isBadge) {
+                          return <span className={statusUi.className}>{statusUi.label}</span>;
+                        }
+                        return <span className={statusUi.className}>{statusUi.label}</span>;
+                      },
+                      sortable: true,
+                      className: 'tab-content-value'
+                    },
                     { key: 'start_epoch', header: 'Start', render: (r) => formatSnapshotDateTime(r.start_epoch), sortable: true, className: 'tab-content-value' },
                     { key: 'end_epoch', header: 'End', render: (r) => (r.end_epoch != null && r.end_epoch !== '' && Number(r.end_epoch) > 0 ? formatSnapshotDateTime(r.end_epoch) : '—'), sortable: true, className: 'tab-content-value' },
                     { key: 'duration', header: 'Duration', render: (r) => r.duration ?? '—', sortable: true, className: 'tab-content-value' },
@@ -777,6 +1104,256 @@ export function SnapshotsTabContent({ onRefreshStateChange }: { onRefreshStateCh
               })()}
             </div>
           </>,
+          document.body
+        )}
+      {snapshotDetailOpen &&
+        createPortal(
+          <div
+            className="fixed inset-0 z-40 flex items-center justify-center bg-black/50 backdrop-blur-[1px]"
+            onClick={(e) => {
+              if (e.target === e.currentTarget) {
+                closeSnapshotDetail();
+              }
+            }}
+          >
+            <div className="w-full max-w-3xl mx-4 max-h-[88vh] overflow-hidden rounded-xl border border-gray-200 bg-white shadow-2xl dark:border-gray-700 dark:bg-gray-800">
+              <div className="flex items-center justify-between gap-3 border-b border-gray-200 px-4 py-3 dark:border-gray-700">
+                <div className="min-w-0">
+                  <h3 className="truncate text-sm font-semibold text-gray-900 dark:text-gray-100">
+                    Snapshot detail
+                  </h3>
+                  <p className="truncate text-xs text-gray-500 dark:text-gray-400">
+                    {snapshotDetailTarget ? `${snapshotDetailTarget.repository} / ${snapshotDetailTarget.snapshot}` : '—'}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={closeSnapshotDetail}
+                  className="rounded p-1.5 text-gray-500 hover:bg-gray-100 hover:text-gray-700 dark:text-gray-400 dark:hover:bg-gray-700 dark:hover:text-gray-200"
+                  aria-label="Close snapshot detail"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+              <div className="max-h-[calc(88vh-56px)] overflow-y-auto p-4 space-y-3">
+                {!snapshotDetailLoading &&
+                  !snapshotDetailError &&
+                  snapshotDetail &&
+                  (() => {
+                    const state = normalizeSnapshotStatus(snapshotDetail.state);
+                    const shouldShow = state !== 'SUCCESS' && state !== 'IN_PROGRESS' && state !== 'STARTED';
+                    if (!shouldShow) return null;
+                    const repo = snapshotDetailTarget?.repository ?? snapshotDetail.repository ?? '{repo}';
+                    const baseUrl = (activeCluster?.baseUrl ?? 'https://your-cluster:9200').replace(/\/$/, '');
+                    return (
+                      <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900 dark:border-amber-900/60 dark:bg-amber-900/20 dark:text-amber-200">
+                        <p className="font-semibold">Note</p>
+                        <p className="mt-1 text-amber-800 dark:text-amber-200/90">
+                          If a snapshot or repository looks unhealthy, you can use this endpoint to verify the repository and inspect the underlying error details (run it with an admin user).
+                        </p>
+                        <div className="mt-2 grid grid-cols-1 md:grid-cols-2 gap-2">
+                          <div>
+                            <p className="text-[11px] font-medium text-amber-900 dark:text-amber-200 mb-1">Kibana Dev Tools</p>
+                            <CodeBlockWithCopy label="verify request" text={`POST /_snapshot/${repo}/_verify`} />
+                          </div>
+                          <div>
+                            <p className="text-[11px] font-medium text-amber-900 dark:text-amber-200 mb-1">Terminal (cURL)</p>
+                            <CodeBlockWithCopy
+                              label="verify curl"
+                              text={`curl -u elastic:YOUR_ELASTIC_PASSWORD -X POST "${baseUrl}/_snapshot/${repo}/_verify"`}
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })()}
+                {snapshotDetailLoading && (
+                  <div className="flex items-center justify-center rounded-lg border border-gray-200 bg-gray-50 p-6 dark:border-gray-700 dark:bg-gray-900/30">
+                    <RefreshCw className="h-5 w-5 animate-spin text-gray-400" />
+                  </div>
+                )}
+                {!snapshotDetailLoading && snapshotDetailError && (
+                  <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-700 dark:border-red-800/60 dark:bg-red-900/20 dark:text-red-300">
+                    {snapshotDetailError}
+                  </div>
+                )}
+                {!snapshotDetailLoading && !snapshotDetailError && snapshotDetail && (
+                  <>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+                      <div className="rounded border border-gray-200 bg-gray-50 px-3 py-2 dark:border-gray-700 dark:bg-gray-900/30">
+                        <p className="text-[11px] text-gray-500 dark:text-gray-400">Repository</p>
+                        <p className="truncate text-sm font-medium text-gray-900 dark:text-gray-100">
+                          {snapshotDetailTarget?.repository ?? snapshotDetail.repository ?? '—'}
+                        </p>
+                      </div>
+                      <div className="rounded border border-gray-200 bg-gray-50 px-3 py-2 dark:border-gray-700 dark:bg-gray-900/30">
+                        <p className="text-[11px] text-gray-500 dark:text-gray-400">State</p>
+                        {(() => {
+                          const ui = getSnapshotStatusPresentation(snapshotDetail.state);
+                          return <span className={ui.className}>{ui.label}</span>;
+                        })()}
+                      </div>
+                      <div className="rounded border border-gray-200 bg-gray-50 px-3 py-2 dark:border-gray-700 dark:bg-gray-900/30">
+                        <p className="text-[11px] text-gray-500 dark:text-gray-400">Include global state</p>
+                        <div className="flex items-center gap-1.5">
+                          <p className="text-sm font-medium text-gray-900 dark:text-gray-100">
+                            {snapshotDetail.include_global_state === true ? 'Yes' : snapshotDetail.include_global_state === false ? 'No' : '—'}
+                          </p>
+                          <InfoPopup
+                            title="Global state"
+                            modalTitle="What is global state in snapshot?"
+                            open={snapshotGlobalStateInfoOpen}
+                            onOpen={() => setSnapshotGlobalStateInfoOpen(true)}
+                            onClose={() => setSnapshotGlobalStateInfoOpen(false)}
+                          >
+                            <p>
+                              Global state includes cluster-level metadata such as persistent settings, index templates, ingest pipelines,
+                              and ILM/SLM-related metadata. Restoring it can change cluster-wide behavior beyond individual indices.
+                            </p>
+                          </InfoPopup>
+                        </div>
+                      </div>
+                      <div className="rounded border border-gray-200 bg-gray-50 px-3 py-2 dark:border-gray-700 dark:bg-gray-900/30">
+                        <p className="text-[11px] text-gray-500 dark:text-gray-400">Shards</p>
+                        <p className="text-sm font-medium text-gray-900 dark:text-gray-100">
+                          {snapshotDetail.shards_stats?.done ?? 0} done / {snapshotDetail.shards_stats?.failed ?? 0} failed / {snapshotDetail.shards_stats?.total ?? 0} total
+                        </p>
+                      </div>
+                      <div className="rounded border border-gray-200 bg-gray-50 px-3 py-2 dark:border-gray-700 dark:bg-gray-900/30">
+                        <p className="text-[11px] text-gray-500 dark:text-gray-400">Failed shard entries</p>
+                        <p className="text-sm font-medium text-gray-900 dark:text-gray-100">{snapshotFailedShards.length}</p>
+                      </div>
+                    </div>
+
+                    <section className="rounded-lg border border-gray-200 dark:border-gray-700">
+                      <div className="border-b border-gray-200 px-3 py-2 text-xs font-semibold text-gray-700 dark:border-gray-700 dark:text-gray-200">
+                        Snapshot stats
+                      </div>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2 p-3">
+                        <div className="rounded border border-gray-200 bg-gray-50 px-3 py-2 dark:border-gray-700 dark:bg-gray-900/30">
+                          <p className="text-[11px] text-gray-500 dark:text-gray-400">Start time</p>
+                          <p className="text-sm font-medium text-gray-900 dark:text-gray-100">
+                            {formatMillisDateTime(snapshotDetail.stats?.start_time_in_millis)}
+                          </p>
+                        </div>
+                        <div className="rounded border border-gray-200 bg-gray-50 px-3 py-2 dark:border-gray-700 dark:bg-gray-900/30">
+                          <p className="text-[11px] text-gray-500 dark:text-gray-400">Duration</p>
+                          <p className="text-sm font-medium text-gray-900 dark:text-gray-100">
+                            {formatDurationMsToHoursMinutes(Number(snapshotDetail.stats?.time_in_millis ?? NaN))}
+                          </p>
+                        </div>
+                        <div className="rounded border border-gray-200 bg-gray-50 px-3 py-2 dark:border-gray-700 dark:bg-gray-900/30">
+                          <p className="text-[11px] text-gray-500 dark:text-gray-400">Incremental size</p>
+                          <p className="text-sm font-medium text-gray-900 dark:text-gray-100">
+                            {formatBytesToHumanReadable(snapshotDetail.stats?.incremental?.size_in_bytes)}
+                          </p>
+                          <p className="text-[11px] text-gray-500 dark:text-gray-400">
+                            {(snapshotDetail.stats?.incremental?.file_count ?? 0).toLocaleString()} files
+                          </p>
+                        </div>
+                        <div className="rounded border border-gray-200 bg-gray-50 px-3 py-2 dark:border-gray-700 dark:bg-gray-900/30">
+                          <p className="text-[11px] text-gray-500 dark:text-gray-400">Total size</p>
+                          <p className="text-sm font-medium text-gray-900 dark:text-gray-100">
+                            {formatBytesToHumanReadable(snapshotDetail.stats?.total?.size_in_bytes)}
+                          </p>
+                          <p className="text-[11px] text-gray-500 dark:text-gray-400">
+                            {(snapshotDetail.stats?.total?.file_count ?? 0).toLocaleString()} files
+                          </p>
+                        </div>
+                      </div>
+                    </section>
+
+                    <section className="rounded-lg border border-gray-200 dark:border-gray-700">
+                      <div className="flex items-center justify-between gap-2 border-b border-gray-200 px-3 py-2 dark:border-gray-700">
+                        <p className="text-xs font-semibold text-gray-700 dark:text-gray-200">Indices</p>
+                        <div className="relative w-full max-w-sm">
+                          <Search className="absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-gray-400" />
+                          <input
+                            type="text"
+                            value={snapshotIndexSearchTerm}
+                            onChange={(e) => setSnapshotIndexSearchTerm(e.target.value)}
+                            placeholder="Search index or failure reason..."
+                            className="w-full rounded border border-gray-300 bg-white py-1 pl-7 pr-7 text-xs text-gray-800 placeholder:text-gray-400 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100"
+                          />
+                          {snapshotIndexSearchTerm && (
+                            <button
+                              type="button"
+                              onClick={() => setSnapshotIndexSearchTerm('')}
+                              className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+                              aria-label="Clear index search"
+                            >
+                              <X className="h-3.5 w-3.5" />
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                      <div className="max-h-80 overflow-y-auto p-3">
+                        {filteredSnapshotIndexRows.length === 0 ? (
+                          <p className="text-xs text-gray-500 dark:text-gray-400">
+                            {snapshotIndexSearchTerm
+                              ? 'No indices match your search.'
+                              : 'No index-level status details returned by the status endpoint.'}
+                          </p>
+                        ) : (
+                          <table className="w-full text-xs">
+                            <thead>
+                              <tr className="border-b border-gray-200 text-left text-gray-500 dark:border-gray-700 dark:text-gray-400">
+                                <th className="py-1.5 pr-2 font-medium">Index</th>
+                                <th className="py-1.5 pr-2 font-medium">Status</th>
+                                <th className="py-1.5 pr-2 font-medium text-right">Done</th>
+                                <th className="py-1.5 pr-2 font-medium text-right">Failed</th>
+                                <th className="py-1.5 pr-2 font-medium text-right">Total</th>
+                                <th className="py-1.5 font-medium">Failure reason</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {filteredSnapshotIndexRows.map((row) => {
+                                const statusUi = getSnapshotStatusPresentation(row.status);
+                                return (
+                                  <tr
+                                    key={row.index}
+                                    className={`border-b border-gray-100 align-top dark:border-gray-800 ${row.failed > 0 ? 'bg-red-50/40 dark:bg-red-900/10' : ''}`}
+                                  >
+                                    <td className="py-1.5 pr-2 font-mono text-gray-800 dark:text-gray-200">
+                                      {onOpenIndexDetails ? (
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            onOpenIndexDetails(row.index);
+                                          }}
+                                          className="text-left text-blue-700 hover:text-blue-800 hover:underline dark:text-blue-400 dark:hover:text-blue-300"
+                                          title={`Open index details for ${row.index}`}
+                                        >
+                                          {row.index}
+                                        </button>
+                                      ) : (
+                                        row.index
+                                      )}
+                                    </td>
+                                    <td className="py-1.5 pr-2"><span className={statusUi.className}>{statusUi.label}</span></td>
+                                    <td className="py-1.5 pr-2 text-right text-gray-700 dark:text-gray-300">{row.done}</td>
+                                    <td className={`py-1.5 pr-2 text-right font-medium ${row.failed > 0 ? 'text-red-700 dark:text-red-300' : 'text-gray-700 dark:text-gray-300'}`}>{row.failed}</td>
+                                    <td className="py-1.5 pr-2 text-right text-gray-700 dark:text-gray-300">{row.total}</td>
+                                    <td className="py-1.5 text-gray-600 dark:text-gray-400">
+                                      {row.primaryReason ? (
+                                        <span className="break-all">{row.primaryReason}</span>
+                                      ) : (
+                                        <span className="text-gray-400 dark:text-gray-500">—</span>
+                                      )}
+                                    </td>
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                          </table>
+                        )}
+                      </div>
+                    </section>
+                  </>
+                )}
+              </div>
+            </div>
+          </div>,
           document.body
         )}
     </div>

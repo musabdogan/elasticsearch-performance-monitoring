@@ -145,6 +145,16 @@ export function ClusterSelector() {
   const [apiKeyInfoOpen, setApiKeyInfoOpen] = useState(false);
   const [basicAuthInfoOpen, setBasicAuthInfoOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
+  const onboardingTourRunRef = useRef(false);
+
+  useEffect(() => {
+    const onRunChanged = (e: Event) => {
+      const ev = e as CustomEvent<{ run?: boolean }>;
+      onboardingTourRunRef.current = ev.detail?.run === true;
+    };
+    window.addEventListener('onboardingTourRunChanged', onRunChanged as EventListener);
+    return () => window.removeEventListener('onboardingTourRunChanged', onRunChanged as EventListener);
+  }, []);
 
   const monitoringUserCurlSnippet = useMemo(() => {
     const baseUrl = (form.baseUrl?.trim() || 'https://localhost:9200').replace(/\/$/, '');
@@ -276,6 +286,8 @@ export function ClusterSelector() {
       const inDropdown = dropdownRef.current?.contains(target);
       const inInfoPopup = (target as Element).closest?.('[data-info-popup]');
       if (dropdownRef.current && !inDropdown && !inInfoPopup) {
+        // During first-cluster onboarding, keep the cluster popup open even if user clicks outside.
+        if (onboardingTourRunRef.current && clusters.length === 0) return;
         handleClose();
       }
     };
@@ -512,6 +524,7 @@ export function ClusterSelector() {
                       <button
                         type="button"
                         onClick={() => setIsAddingNew(true)}
+                        data-tour="cluster-add-button"
                         className="flex items-center gap-1 rounded-md bg-blue-600 px-3 py-2 text-xs font-medium text-white transition-colors hover:bg-blue-700"
                       >
                         <Plus className="h-4 w-4" />
@@ -840,7 +853,7 @@ export function ClusterSelector() {
                 </>
               ) : (
                 /* Add/Edit Form */
-                <form onSubmit={handleSubmit} className="space-y-3">
+                <form onSubmit={handleSubmit} className="space-y-3" data-tour="cluster-form">
                   <div>
                     <label className="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-400">
                       Name

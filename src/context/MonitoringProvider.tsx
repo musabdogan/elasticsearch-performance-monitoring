@@ -212,6 +212,25 @@ export function MonitoringProvider({ children }: { children: ReactNode }) {
   
   const activeCluster =
     clusters.find((cluster) => cluster.label === activeClusterLabel) ?? clusters[0] ?? null;
+
+  const normalizeClusterBaseUrl = useCallback((raw: string): string => {
+    const trimmed = (raw ?? '').trim().replace(/\/$/, '');
+    if (!trimmed) return trimmed;
+    // If scheme is missing (e.g. "localhost:9200"), default to http:// to form a valid URL for fetch().
+    if (!/^https?:\/\//i.test(trimmed)) return `http://${trimmed}`;
+    return trimmed;
+  }, []);
+
+  // Migrate any previously stored clusters that are missing a URL scheme.
+  useEffect(() => {
+    if (clusters.length === 0) return;
+    const next = clusters.map((c) => {
+      const normalized = normalizeClusterBaseUrl(c.baseUrl);
+      return normalized === c.baseUrl ? c : { ...c, baseUrl: normalized };
+    });
+    const changed = next.some((c, i) => c.baseUrl !== clusters[i].baseUrl);
+    if (changed) setClusters(next);
+  }, [clusters, normalizeClusterBaseUrl]);
   
   useEffect(() => {
     setStoredValue(CLUSTERS_STORAGE_KEY, clusters);
@@ -773,7 +792,8 @@ export function MonitoringProvider({ children }: { children: ReactNode }) {
   
   const addCluster = useCallback(async (input: CreateClusterInput) => {
     try {
-      const sanitizedBaseUrl = input.baseUrl.trim().replace(/\/$/, '');
+      const sanitizedBaseUrlRaw = input.baseUrl.trim().replace(/\/$/, '');
+      const sanitizedBaseUrl = /^https?:\/\//i.test(sanitizedBaseUrlRaw) ? sanitizedBaseUrlRaw : `http://${sanitizedBaseUrlRaw}`;
       const clusterLabel = (input.label || sanitizedBaseUrl).trim();
 
       const authType = input.authType ?? (input.apiKey?.trim() ? 'apiKey' : input.username && input.password ? 'basic' : 'none');
@@ -817,7 +837,8 @@ export function MonitoringProvider({ children }: { children: ReactNode }) {
   }, []);
   
   const updateCluster = useCallback((clusterLabel: string, input: CreateClusterInput) => {
-    const sanitizedBaseUrl = input.baseUrl.trim().replace(/\/$/, '');
+    const sanitizedBaseUrlRaw = input.baseUrl.trim().replace(/\/$/, '');
+    const sanitizedBaseUrl = /^https?:\/\//i.test(sanitizedBaseUrlRaw) ? sanitizedBaseUrlRaw : `http://${sanitizedBaseUrlRaw}`;
     const newLabel = input.label || sanitizedBaseUrl;
 
     const authType = input.authType ?? (input.apiKey?.trim() ? 'apiKey' : input.username && input.password ? 'basic' : 'none');
@@ -865,12 +886,6 @@ export function MonitoringProvider({ children }: { children: ReactNode }) {
   const deleteCluster = useCallback(
     (clusterLabel: string) => {
       const clusterToDelete = clusters.find((c) => c.label === clusterLabel);
-      if (clusters.length === 1) {
-        toast.error('Cannot delete', {
-          description: 'At least one cluster must remain.'
-        });
-        return;
-      }
       
       setClusters((prev) => prev.filter((c) => c.label !== clusterLabel));
       if (activeClusterLabel === clusterLabel) {

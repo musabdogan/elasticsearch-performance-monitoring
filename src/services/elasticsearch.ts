@@ -29,7 +29,9 @@ import type {
   PerformanceMetrics,
   SingleIndexStatsResponse,
   SnapshotAllResponse,
-  SnapshotReposResponse
+  SnapshotReposResponse,
+  SnapshotRepositoryVerifyResponse,
+  SnapshotStatusResponse
 } from '@/types/api';
 import type { ClusterConnection } from '@/types/app';
 import { clusterKeyFromBaseUrl, runClusterGovernedFetch } from '@/utils/clusterRequestGovernor';
@@ -504,6 +506,64 @@ export async function getSnapshotAllFromAllRepos(
   const response = await fetchWithTimeoutAndRetry(url, headers, signal, {}, cluster);
   if (!response.ok) throw new Error(`Snapshots ${response.status} ${response.statusText}`);
   return (await response.json()) as SnapshotAllResponse;
+}
+
+/** GET _snapshot/{repo}/{snapshot}/_status — detailed shard-level snapshot progress/failures. */
+export async function getSnapshotStatus(
+  cluster: ClusterConnection,
+  repoName: string,
+  snapshotName: string,
+  signal?: AbortSignal | null
+): Promise<SnapshotStatusResponse> {
+  const base = cluster.baseUrl.replace(/\/$/, '');
+  const filterPath = new URLSearchParams({
+    filter_path: [
+      'snapshots.snapshot',
+      'snapshots.repository',
+      'snapshots.state',
+      'snapshots.include_global_state',
+      'snapshots.shards_stats',
+      'snapshots.stats.start_time_in_millis',
+      'snapshots.stats.time_in_millis',
+      'snapshots.stats.incremental.file_count',
+      'snapshots.stats.incremental.size_in_bytes',
+      'snapshots.stats.total.file_count',
+      'snapshots.stats.total.size_in_bytes',
+      'snapshots.indices.*.shards_stats',
+      'snapshots.indices.*.shards.*.stage',
+      'snapshots.indices.*.shards.*.reason'
+    ].join(',')
+  });
+  const url = `${base}/_snapshot/${encodeURIComponent(repoName)}/${encodeURIComponent(snapshotName)}/_status?${filterPath.toString()}`;
+  const headers = buildHeaders(cluster);
+  const response = await fetchWithTimeoutAndRetry(url, headers, signal, {}, cluster);
+  if (!response.ok) throw new Error(`Snapshot status ${response.status} ${response.statusText}`);
+  return (await response.json()) as SnapshotStatusResponse;
+}
+
+/** POST _snapshot/{repo}/_verify — verifies repository access across nodes. */
+export async function getSnapshotRepositoryVerify(
+  cluster: ClusterConnection,
+  repoName: string,
+  signal?: AbortSignal | null
+): Promise<SnapshotRepositoryVerifyResponse> {
+  const base = cluster.baseUrl.replace(/\/$/, '');
+  const url = `${base}/_snapshot/${encodeURIComponent(repoName)}/_verify`;
+  const headers = buildHeaders(cluster);
+  const response = await fetchWithTimeoutAndRetry(url, headers, signal, { method: 'POST' }, cluster);
+  if (!response.ok) {
+    let reason = '';
+    try {
+      const err = (await response.json()) as {
+        error?: { reason?: string; root_cause?: Array<{ reason?: string }> };
+      };
+      reason = err.error?.reason ?? err.error?.root_cause?.[0]?.reason ?? '';
+    } catch {
+      // ignore parse errors and fall back to generic message
+    }
+    throw new Error(reason || `Snapshot repository verify ${response.status} ${response.statusText}`);
+  }
+  return (await response.json()) as SnapshotRepositoryVerifyResponse;
 }
 
 // ——— Indices tab ———
