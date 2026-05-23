@@ -1129,8 +1129,8 @@ export function IndicesTabContent({
   const [ilmExplainInfoOpen, setIlmExplainInfoOpen] = useState(false);
   /** Field usage stats section: closed by default; expanding triggers fetch. */
   const [indicesExpanded, setIndicesExpanded] = useState(false);
-  /** Data streams section: independent collapsible; closed when modalOnly (no background fetch). */
-  const [dataStreamsExpanded, setDataStreamsExpanded] = useState(!modalOnly);
+  /** Data streams section: independent collapsible; closed by default. */
+  const [dataStreamsExpanded, setDataStreamsExpanded] = useState(false);
 
   type TierKey = 'hot' | 'warm' | 'cold' | 'frozen';
   type DataStreamTierRow = {
