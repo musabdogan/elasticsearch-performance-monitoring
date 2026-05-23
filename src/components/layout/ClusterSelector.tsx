@@ -4,6 +4,7 @@ import { useMonitoring } from '@/context/MonitoringProvider';
 import { checkClusterHealth, getClusterHealth } from '@/services/elasticsearch';
 import { InfoPopup } from '@/components/ui/InfoPopup';
 import type { AuthType, ClusterConnection, ClusterCategory, CreateClusterInput } from '@/types/app';
+import { hasSearchTerms, matchesParsedTermsInAnyText, parseSearchTerms } from '@/utils/search';
 
 /** Category config: either Icon or emoji (generic horse face for Other). */
 const CLUSTER_CATEGORIES: {
@@ -178,13 +179,12 @@ export function ClusterSelector() {
         : false;
 
   const filteredClusters = useMemo(() => {
-    const q = filter.trim().toLowerCase();
+    const parsed = parseSearchTerms(filter);
     let list = clusters;
-    if (q) {
+    if (hasSearchTerms(parsed)) {
       list = list.filter(
         (c) =>
-          c.label.toLowerCase().includes(q) ||
-          c.baseUrl.toLowerCase().includes(q)
+          matchesParsedTermsInAnyText([c.label, c.baseUrl], parsed)
       );
     }
     if (statusFilter) {

@@ -8,6 +8,7 @@ import { InfoPopup } from '@/components/ui/InfoPopup';
 import { AllClearEmpty } from '@/components/ui/AllClearEmpty';
 import { TabSectionExpandTrigger } from '@/components/ui/TabSectionExpandTrigger';
 import { RefreshCw, Copy, Check, Search, X, CheckCircle2 } from 'lucide-react';
+import { hasSearchTerms, matchesParsedTermsInAnyText, parseSearchTerms } from '@/utils/search';
 
 const INDICATOR_LABELS: Record<string, string> = {
   master_is_stable: 'Master stability',
@@ -147,8 +148,14 @@ function HeaderAllClear({ label = 'All Clear!' }: { label?: string }) {
   );
 }
 
-export function ClusterTabContent({ onRefreshStateChange }: { onRefreshStateChange?: (loading: boolean) => void } = {}) {
-  const { activeCluster } = useMonitoring();
+export function ClusterTabContent({
+  onRefreshStateChange,
+  onOpenNodeDetails
+}: {
+  onRefreshStateChange?: (loading: boolean) => void;
+  onOpenNodeDetails?: (nodeName: string) => void;
+} = {}) {
+  const { activeCluster, isClusterUnreachable } = useMonitoring();
   const clusterKey = activeCluster?.baseUrl ?? activeCluster?.label ?? '';
   const lastInitializedClusterKeyRef = useRef<string | null>(null);
 
@@ -199,7 +206,7 @@ export function ClusterTabContent({ onRefreshStateChange }: { onRefreshStateChan
   const [expandedIndicesKeys, setExpandedIndicesKeys] = useState<Set<string>>(new Set());
 
   const fetchHealth = useCallback(async () => {
-    if (!activeCluster) return;
+    if (!activeCluster || isClusterUnreachable) return;
     setHealthLoading(true);
     setHealthError(null);
     try {
@@ -212,10 +219,10 @@ export function ClusterTabContent({ onRefreshStateChange }: { onRefreshStateChan
     } finally {
       setHealthLoading(false);
     }
-  }, [activeCluster]);
+  }, [activeCluster, isClusterUnreachable]);
 
   const fetchUnassigned = useCallback(async () => {
-    if (!activeCluster) return;
+    if (!activeCluster || isClusterUnreachable) return;
     setUnassignedLoading(true);
     setUnassignedError(null);
     try {
@@ -228,10 +235,10 @@ export function ClusterTabContent({ onRefreshStateChange }: { onRefreshStateChan
     } finally {
       setUnassignedLoading(false);
     }
-  }, [activeCluster]);
+  }, [activeCluster, isClusterUnreachable]);
 
   const fetchPending = useCallback(async () => {
-    if (!activeCluster) return;
+    if (!activeCluster || isClusterUnreachable) return;
     setPendingLoading(true);
     setPendingError(null);
     try {
@@ -244,10 +251,10 @@ export function ClusterTabContent({ onRefreshStateChange }: { onRefreshStateChan
     } finally {
       setPendingLoading(false);
     }
-  }, [activeCluster]);
+  }, [activeCluster, isClusterUnreachable]);
 
   const fetchRecovery = useCallback(async () => {
-    if (!activeCluster) return;
+    if (!activeCluster || isClusterUnreachable) return;
     setRecoveryLoading(true);
     setRecoveryError(null);
     try {
@@ -260,10 +267,10 @@ export function ClusterTabContent({ onRefreshStateChange }: { onRefreshStateChan
     } finally {
       setRecoveryLoading(false);
     }
-  }, [activeCluster]);
+  }, [activeCluster, isClusterUnreachable]);
 
   useEffect(() => {
-    if (!clusterKey) return;
+    if (!clusterKey || isClusterUnreachable) return;
     if (lastInitializedClusterKeyRef.current === clusterKey) return;
     lastInitializedClusterKeyRef.current = clusterKey;
 
@@ -304,7 +311,7 @@ export function ClusterTabContent({ onRefreshStateChange }: { onRefreshStateChan
     void fetchUnassigned();
     void fetchPending();
     void fetchRecovery();
-  }, [clusterKey, fetchHealth, fetchUnassigned, fetchPending, fetchRecovery]);
+  }, [clusterKey, fetchHealth, fetchUnassigned, fetchPending, fetchRecovery, isClusterUnreachable]);
 
   useEffect(() => {
     allocationExplainRef.current = allocationExplain;
@@ -339,7 +346,7 @@ export function ClusterTabContent({ onRefreshStateChange }: { onRefreshStateChan
 
   const fetchAllocationExplain = useCallback(
     async (key: string, row: CatShardRow, signal?: AbortSignal | null): Promise<void> => {
-      if (!activeCluster) return;
+      if (!activeCluster || isClusterUnreachable) return;
 
       setAllocationLoadingKeys((prev) => {
         if (prev.has(key)) return prev;
@@ -370,11 +377,12 @@ export function ClusterTabContent({ onRefreshStateChange }: { onRefreshStateChan
         });
       }
     },
-    [activeCluster]
+    [activeCluster, isClusterUnreachable]
   );
 
   useEffect(() => {
-    if (!unassignedExpanded || !activeCluster || unassignedShards.length === 0) return;
+    if (!unassignedExpanded || !activeCluster || isClusterUnreachable || unassignedShards.length === 0)
+      return;
 
     let cancelled = false;
     const controller = new AbortController();
@@ -461,16 +469,12 @@ export function ClusterTabContent({ onRefreshStateChange }: { onRefreshStateChan
   const allClearEmpty = <AllClearEmpty />;
 
   const filteredUnassigned = useMemo(() => {
-    const term = unassignedSearch.trim().toLowerCase();
-    if (!term) return unassignedShards;
+    const parsed = parseSearchTerms(unassignedSearch);
+    if (!hasSearchTerms(parsed)) return unassignedShards;
     return unassignedShards.filter((s) => {
       const key = shardKey(s);
-      const candidateNode = getCandidateNodeLabel(allocationExplain[key]).toLowerCase();
-      return (
-        (s.index ?? '').toLowerCase().includes(term) ||
-        (s.node ?? '').toLowerCase().includes(term) ||
-        candidateNode.includes(term)
-      );
+      const candidateNode = getCandidateNodeLabel(allocationExplain[key]);
+      return matchesParsedTermsInAnyText([s.index ?? '', s.node ?? '', candidateNode], parsed);
     });
   }, [unassignedShards, unassignedSearch, allocationExplain]);
 
@@ -492,18 +496,24 @@ export function ClusterTabContent({ onRefreshStateChange }: { onRefreshStateChan
   }, [filteredUnassigned]);
 
   const filteredPending = useMemo(() => {
-    const term = pendingSearch.trim().toLowerCase();
-    if (!term) return pendingTasks;
+    const parsed = parseSearchTerms(pendingSearch);
+    if (!hasSearchTerms(parsed)) return pendingTasks;
     return pendingTasks.filter((t) =>
-      [t.insert_order, t.time_in_queue, t.priority, t.source].some((v) => String(v ?? '').toLowerCase().includes(term))
+      matchesParsedTermsInAnyText(
+        [t.insert_order, t.time_in_queue, t.priority, t.source].map((v) => String(v ?? '')),
+        parsed
+      )
     );
   }, [pendingTasks, pendingSearch]);
 
   const filteredRecovery = useMemo(() => {
-    const term = recoverySearch.trim().toLowerCase();
-    if (!term) return activeRecovery;
+    const parsed = parseSearchTerms(recoverySearch);
+    if (!hasSearchTerms(parsed)) return activeRecovery;
     return activeRecovery.filter((r) =>
-      [r.i, r.ty, r.st, r.source_node, r.target_node].some((v) => String(v ?? '').toLowerCase().includes(term))
+      matchesParsedTermsInAnyText(
+        [r.i, r.ty, r.st, r.source_node, r.target_node].map((v) => String(v ?? '')),
+        parsed
+      )
     );
   }, [activeRecovery, recoverySearch]);
 
@@ -963,7 +973,27 @@ export function ClusterTabContent({ onRefreshStateChange }: { onRefreshStateChan
                   render: (r) => {
                     const key = shardKey(r);
                     const explain = allocationExplain[key];
-                    return getCandidateNodeLabel(explain);
+                    const label = getCandidateNodeLabel(explain);
+                    if (label === '-' || !onOpenNodeDetails) return label;
+                    return (
+                      <span className="inline-flex flex-wrap gap-1">
+                        {label.split(',').map((name) => {
+                          const nodeName = name.trim();
+                          if (!nodeName) return null;
+                          return (
+                            <button
+                              key={`${key}-${nodeName}`}
+                              type="button"
+                              onClick={() => onOpenNodeDetails(nodeName)}
+                              className="font-mono text-blue-600 hover:underline dark:text-blue-400"
+                              title={`Open node details for ${nodeName}`}
+                            >
+                              {nodeName}
+                            </button>
+                          );
+                        })}
+                      </span>
+                    );
                   },
                   className: 'tab-content-value max-w-[260px] truncate'
                 },
@@ -1086,7 +1116,18 @@ export function ClusterTabContent({ onRefreshStateChange }: { onRefreshStateChan
                           return (
                             <tr key={`${nodeIdx}-empty`} className="border-b border-gray-100 last:border-0 dark:border-slate-800">
                               <td className="px-2 py-1 align-top font-mono text-[11px] text-gray-800 dark:text-gray-100">
-                                {node.node_name ?? node.node_id ?? 'Unknown node'}
+                                {onOpenNodeDetails && (node.node_name ?? node.node_id) ? (
+                                  <button
+                                    type="button"
+                                    onClick={() => onOpenNodeDetails(node.node_name ?? node.node_id ?? '')}
+                                    className="font-mono text-blue-600 hover:underline dark:text-blue-400"
+                                    title={`Open node details for ${node.node_name ?? node.node_id ?? ''}`}
+                                  >
+                                    {node.node_name ?? node.node_id ?? 'Unknown node'}
+                                  </button>
+                                ) : (
+                                  (node.node_name ?? node.node_id ?? 'Unknown node')
+                                )}
                               </td>
                               <td className="px-2 py-1 align-top text-gray-500 dark:text-gray-400" colSpan={3}>
                                 No decider information.
@@ -1104,7 +1145,18 @@ export function ClusterTabContent({ onRefreshStateChange }: { onRefreshStateChan
                                 className="px-2 py-1 align-top font-mono text-[11px] text-gray-800 dark:text-gray-100"
                                 rowSpan={deciders.length}
                               >
-                                {node.node_name ?? node.node_id ?? 'Unknown node'}
+                                {onOpenNodeDetails && (node.node_name ?? node.node_id) ? (
+                                  <button
+                                    type="button"
+                                    onClick={() => onOpenNodeDetails(node.node_name ?? node.node_id ?? '')}
+                                    className="font-mono text-blue-600 hover:underline dark:text-blue-400"
+                                    title={`Open node details for ${node.node_name ?? node.node_id ?? ''}`}
+                                  >
+                                    {node.node_name ?? node.node_id ?? 'Unknown node'}
+                                  </button>
+                                ) : (
+                                  (node.node_name ?? node.node_id ?? 'Unknown node')
+                                )}
                               </td>
                             )}
                             <td className="px-2 py-1 align-top text-gray-700 dark:text-gray-200">
@@ -1352,8 +1404,46 @@ export function ClusterTabContent({ onRefreshStateChange }: { onRefreshStateChan
                 { key: 't', header: 'Time', sortable: true, className: 'tab-content-value', render: (r) => r.t ?? '-' },
                 { key: 'ty', header: 'Type', sortable: true, className: 'tab-content-value', render: (r) => r.ty ?? '-' },
                 { key: 'st', header: 'Stage', sortable: true, className: 'tab-content-value', render: (r) => r.st ?? '-' },
-                { key: 'source_node', header: 'Source', sortable: true, className: 'font-mono tab-content-value max-w-[160px] truncate', render: (r) => r.source_node ?? '-' },
-                { key: 'target_node', header: 'Target', sortable: true, className: 'font-mono tab-content-value max-w-[160px] truncate', render: (r) => r.target_node ?? '-' },
+                {
+                  key: 'source_node',
+                  header: 'Source',
+                  sortable: true,
+                  className: 'font-mono tab-content-value max-w-[160px] truncate',
+                  render: (r) => {
+                    const nodeName = r.source_node ?? '-';
+                    if (!onOpenNodeDetails || nodeName === '-') return nodeName;
+                    return (
+                      <button
+                        type="button"
+                        onClick={() => onOpenNodeDetails(nodeName)}
+                        className="font-mono text-blue-600 hover:underline dark:text-blue-400"
+                        title={`Open node details for ${nodeName}`}
+                      >
+                        {nodeName}
+                      </button>
+                    );
+                  }
+                },
+                {
+                  key: 'target_node',
+                  header: 'Target',
+                  sortable: true,
+                  className: 'font-mono tab-content-value max-w-[160px] truncate',
+                  render: (r) => {
+                    const nodeName = r.target_node ?? '-';
+                    if (!onOpenNodeDetails || nodeName === '-') return nodeName;
+                    return (
+                      <button
+                        type="button"
+                        onClick={() => onOpenNodeDetails(nodeName)}
+                        className="font-mono text-blue-600 hover:underline dark:text-blue-400"
+                        title={`Open node details for ${nodeName}`}
+                      >
+                        {nodeName}
+                      </button>
+                    );
+                  }
+                },
                 { key: 'fp', header: 'Files', sortable: true, className: 'tab-content-value', render: (r) => r.fp ?? '-' },
                 { key: 'bp', header: 'Bytes', sortable: true, className: 'tab-content-value', render: (r) => r.bp ?? '-' },
                 { key: 'translog_ops_percent', header: 'Translog', sortable: true, className: 'tab-content-value', render: (r) => r.translog_ops_percent ?? '-' }

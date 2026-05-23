@@ -2,6 +2,7 @@ import { apiConfig, apiHeaders } from '@/config/api';
 import type {
   AllocationExplainResponse,
   CatAliasRow,
+  CatAllocationRow,
   CatIndexRow,
   CatNodeAttrsRow,
   CatNodeExtendedRow,
@@ -27,6 +28,7 @@ import type {
   NodeStats,
   NodesStatsExtendedResponse,
   PerformanceMetrics,
+  SearchResponse,
   SingleIndexStatsResponse,
   SnapshotAllResponse,
   SnapshotReposResponse,
@@ -58,6 +60,13 @@ function buildHeaders(cluster: ClusterConnection): HeadersInit {
 }
 
 const REQUEST_TIMED_OUT_MESSAGE = 'Request timed out';
+
+/** Connection refused / Failed to fetch — fail immediately, do not wait for timeout retries. */
+function isImmediateNetworkError(e: unknown): boolean {
+  if (!(e instanceof Error)) return false;
+  if (e.name === 'AbortError') return false;
+  return e instanceof TypeError || /failed to fetch|network error/i.test(e.message);
+}
 
 /** User-facing message for timeout/network errors (ElasticVue-style). Use when cluster URI is known. */
 export function getNetworkErrorMessage(clusterBaseUrl: string): string {
@@ -116,6 +125,9 @@ async function fetchWithTimeoutAndRetry(
         return response;
       } catch (e) {
         clearTimeout(timeoutId);
+        if (isImmediateNetworkError(e)) {
+          throw new Error('Network error');
+        }
         if (e instanceof Error && e.name === 'AbortError') {
           if (abortedDueToTimeout && attempt < maxAttempts) {
             await new Promise((r) => setTimeout(r, 500 * attempt));
@@ -486,6 +498,15 @@ export async function getCatNodesExtended(
   return Array.isArray(data) ? data : [];
 }
 
+/** GET _cat/allocation — node-level shard and disk allocation stats. */
+export async function getCatAllocation(
+  cluster: ClusterConnection,
+  signal?: AbortSignal | null
+): Promise<CatAllocationRow[]> {
+  const data = await request<CatAllocationRow[]>('catAllocation', cluster, signal);
+  return Array.isArray(data) ? data : [];
+}
+
 /** GET _cat/nodeattrs — node attributes (e.g. rack, zone). Returns one row per (node, attr). */
 export async function getCatNodeAttrs(
   cluster: ClusterConnection,
@@ -785,6 +806,31 @@ export async function getLegacyTemplates(
   signal?: AbortSignal | null
 ): Promise<LegacyTemplateListResponse> {
   return request<LegacyTemplateListResponse>('legacyTemplate', cluster, signal);
+}
+
+/** POST /{indexPattern}/_search */
+export async function searchIndexDocuments(
+  cluster: ClusterConnection,
+  indexPattern: string,
+  body: Record<string, unknown>,
+  signal?: AbortSignal | null
+): Promise<SearchResponse> {
+  const base = cluster.baseUrl.replace(/\/$/, '');
+  const path = `/${(indexPattern || '*').trim() || '*'}/_search`;
+  const url = `${base}${path}`;
+  const headers = buildHeaders(cluster);
+  const response = await fetchWithTimeoutAndRetry(
+    url,
+    headers,
+    signal,
+    { method: 'POST', body: JSON.stringify(body) },
+    cluster
+  );
+  if (!response.ok) {
+    const text = await response.text().catch(() => '');
+    throw new Error(`Search ${response.status} ${response.statusText}${text ? ` - ${text}` : ''}`);
+  }
+  return (await response.json()) as SearchResponse;
 }
 
 /**

@@ -1,4 +1,4 @@
-import { memo, useState, useEffect } from 'react';
+import { memo, useState, useEffect, useRef } from 'react';
 import { 
   X,
   Settings,
@@ -66,6 +66,7 @@ const AlertManagement = memo<AlertManagementProps>(({
   onResetToDefaults,
   isPanel = false
 }) => {
+  const backdropMouseDownRef = useRef(false);
   const [activeTab, setActiveTab] = useState<TabType>('alerts');
   const [tempSettings, setTempSettings] = useState<AlertSettings>(settings);
   const [selectedAlert, setSelectedAlert] = useState<AlertInstance | null>(null);
@@ -406,10 +407,14 @@ const AlertManagement = memo<AlertManagementProps>(({
     <>
     <div 
       className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/50 backdrop-blur-sm"
+      onMouseDown={(e) => {
+        backdropMouseDownRef.current = e.target === e.currentTarget;
+      }}
       onClick={(e) => {
-        if (e.target === e.currentTarget) {
+        if (e.target === e.currentTarget && backdropMouseDownRef.current) {
           onClose();
         }
+        backdropMouseDownRef.current = false;
       }}
     >
       <div className="bg-white dark:bg-gray-800 rounded-xl shadow-2xl w-full max-w-4xl h-[80vh] flex flex-col mx-4">

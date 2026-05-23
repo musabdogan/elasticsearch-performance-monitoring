@@ -1,12 +1,14 @@
-import { useEffect, useState, useCallback, useMemo } from 'react';
+import { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import { useMonitoring } from '@/context/MonitoringProvider';
-import type { CatNodeExtendedRow } from '@/types/api';
+import type { CatAllocationRow, CatNodeExtendedRow, CatShardRow } from '@/types/api';
 import { ProgressBar } from '@/components/ui/ProgressBar';
 import { InfoPopup } from '@/components/ui/InfoPopup';
 import Pagination from '@/components/data/Pagination';
 import { RefreshCw, ArrowUp, ArrowDown, ArrowUpDown, Search, X } from 'lucide-react';
 import { TabSectionExpandTrigger } from '@/components/ui/TabSectionExpandTrigger';
 import { formatBytes, parseDiskSizeToBytes } from '@/utils/format';
+import { getCatAllocation, getCatShards, getNodeStats } from '@/services/elasticsearch';
+import { hasSearchTerms, parseSearchTerms } from '@/utils/search';
 
 type SortKey = keyof CatNodeExtendedRow;
 type SortDirection = 'asc' | 'desc' | null;
@@ -19,7 +21,7 @@ const SECONDARY_SORT_DIRECTION: SortDirection = 'asc';
 const NUMERIC_KEYS: SortKey[] = ['cpu', 'ram.percent', 'heap.percent', 'disk.used_percent', 'load_1m', 'shards'];
 
 const DEFAULT_NODES_PAGE_SIZE = 10;
-const NODES_TABLE_COL_COUNT = 12;
+const NODES_TABLE_COL_COUNT = 11;
 
 /** System/default node attributes (in popup show name only, not value). */
 const DEFAULT_NODE_ATTRS = new Set([
@@ -53,6 +55,41 @@ const NODE_ROLE_DESCRIPTIONS: Record<string, string> = {
   m: 'master-eligible node',
   v: 'voting-only master node'
 };
+
+function formatNodeRoleReadable(nodeRole: string | null | undefined): string {
+  const raw = String(nodeRole ?? '').trim();
+  if (!raw) return '—';
+  const uniqueRoles = [...new Set(raw.split('').filter(Boolean))];
+  const labels = uniqueRoles.map((char) => {
+    const desc = NODE_ROLE_DESCRIPTIONS[char.toLowerCase()];
+    if (!desc) return char;
+    return desc.replace(/\s+node$/i, '');
+  });
+  return labels.join(', ');
+}
+
+function normalizeForSearch(value: string | null | undefined): string {
+  return String(value ?? '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .trim();
+}
+
+function nodeRoleSearchText(nodeRole: string | null | undefined): string {
+  const raw = String(nodeRole ?? '').trim();
+  if (!raw) return '';
+  const parts: string[] = [raw];
+  const uniqueRoles = [...new Set(raw.split('').filter(Boolean))];
+  for (const char of uniqueRoles) {
+    const desc = NODE_ROLE_DESCRIPTIONS[char.toLowerCase()];
+    if (desc) {
+      parts.push(desc);
+      parts.push(desc.replace(/\s+node$/i, ''));
+    }
+  }
+  return parts.join(' ');
+}
 
 function formatNodeRoleTooltip(nodeRole: string): string {
   const uniqueRoles = [...new Set(nodeRole.split('').filter(Boolean))];
@@ -118,14 +155,42 @@ function formatUsedTotal(
   return `${formatBytes(uBytes)}/${formatBytes(tBytes)}`;
 }
 
-export function NodesTabContent({ onRefreshStateChange }: { onRefreshStateChange?: (loading: boolean) => void } = {}) {
+function buildDiskTooltip(allocation: CatAllocationRow | null): string | undefined {
+  if (!allocation) return undefined;
+  const lines = [
+    `disk.total: ${allocation['disk.total'] ?? '—'}`,
+    `disk.used: ${allocation['disk.used'] ?? '—'}`,
+    `disk.indices: ${allocation['disk.indices'] ?? '—'}`,
+    `disk.available: ${allocation['disk.avail'] ?? '—'}`
+  ];
+  return lines.join('\n');
+}
+
+interface NodesTabContentProps {
+  onRefreshStateChange?: (loading: boolean) => void;
+  onOpenNodeDetails?: (nodeName: string) => void;
+  modalOnly?: boolean;
+  externalOpenNode?: string | null;
+  onExternalModalClose?: () => void;
+}
+
+export function NodesTabContent({
+  onRefreshStateChange,
+  onOpenNodeDetails,
+  modalOnly = false,
+  externalOpenNode = null,
+  onExternalModalClose
+}: NodesTabContentProps = {}) {
   const {
     activeCluster,
     catNodesExtended,
     nodeAttrsByNodeId,
+    snapshot,
+    prevSnapshot,
     nodesLoading,
     nodesError,
     refreshNodes,
+    isClusterUnreachable
   } = useMonitoring();
   const nodes = catNodesExtended ?? [];
   const [infoOpen, setInfoOpen] = useState(false);
@@ -136,6 +201,15 @@ export function NodesTabContent({ onRefreshStateChange }: { onRefreshStateChange
   const [nodesPageSize, setNodesPageSize] = useState(DEFAULT_NODES_PAGE_SIZE);
   const [expandedComingSoon, setExpandedComingSoon] = useState<Set<string>>(new Set());
   const [nodeAttrsPopover, setNodeAttrsPopover] = useState<{ nodeName: string; attrs: Array<{ attr: string; value: string }> } | null>(null);
+  const [selectedNodeName, setSelectedNodeName] = useState<string | null>(null);
+  const [selectedNodeShardRows, setSelectedNodeShardRows] = useState<CatShardRow[]>([]);
+  const [selectedNodeShardsLoading, setSelectedNodeShardsLoading] = useState(false);
+  const [selectedNodeShardsError, setSelectedNodeShardsError] = useState<string | null>(null);
+  const [liveNodeRates, setLiveNodeRates] = useState<{ indexingRate: number; searchRate: number } | null>(null);
+  const [catAllocationRows, setCatAllocationRows] = useState<CatAllocationRow[]>([]);
+  const prevLiveTotalsRef = useRef<{ indexTotal: number; searchTotal: number; fetchedAt: number } | null>(null);
+  const nodeDetailBackdropMouseDownRef = useRef(false);
+  const nodeAttrsBackdropMouseDownRef = useRef(false);
 
   const toggleComingSoon = useCallback((id: string) => {
     setExpandedComingSoon((prev) => {
@@ -155,21 +229,61 @@ export function NodesTabContent({ onRefreshStateChange }: { onRefreshStateChange
     return () => window.removeEventListener('keydown', onKey);
   }, [nodeAttrsPopover]);
 
+  const closeNodeModal = useCallback(() => {
+    setSelectedNodeName(null);
+    setSelectedNodeShardRows([]);
+    setSelectedNodeShardsError(null);
+    if (modalOnly) onExternalModalClose?.();
+  }, [modalOnly, onExternalModalClose]);
+
+  const openNodeDetails = useCallback((nodeName: string) => {
+    if (!nodeName) return;
+    if (onOpenNodeDetails) {
+      onOpenNodeDetails(nodeName);
+      return;
+    }
+    setSelectedNodeName(nodeName);
+  }, [onOpenNodeDetails]);
+
   const effectiveColumn = sortColumn ?? DEFAULT_SORT_COLUMN;
   const effectiveDirection = sortDirection ?? DEFAULT_SORT_DIRECTION;
 
   const filteredNodes = useMemo(() => {
-    if (!searchTerm.trim()) return nodes;
-    const term = searchTerm.toLowerCase().trim();
+    const parsed = parseSearchTerms(searchTerm);
+    if (!hasSearchTerms(parsed)) return nodes;
+
     return nodes.filter((r) => {
-      const name = String(r.name ?? '').toLowerCase();
-      const ip = String(r.ip ?? '').toLowerCase();
-      const id = String(r.id ?? '').toLowerCase();
-      const role = String(r['node.role'] ?? '').toLowerCase();
-      const version = String(r.version ?? '').toLowerCase();
-      return name.includes(term) || ip.includes(term) || id.includes(term) || role.includes(term) || version.includes(term);
+      const name = normalizeForSearch(r.name);
+      const ip = normalizeForSearch(r.ip);
+      const id = normalizeForSearch(r.id);
+      const role = normalizeForSearch(nodeRoleSearchText(r['node.role']));
+      const version = normalizeForSearch(r.version);
+      const attrs: Array<{ attr: string; value: string }> =
+        nodeAttrsByNodeId?.[r.name ?? ''] ?? nodeAttrsByNodeId?.[r.id ?? ''] ?? [];
+      const attrsText = normalizeForSearch(
+        attrs
+          .map((a) => `${a.attr} ${a.value} ${a.attr}=${a.value}`)
+          .join(' ')
+      );
+      const includeMatch = parsed.includeTerms.every((term) =>
+        name.includes(term) ||
+        ip.includes(term) ||
+        id.includes(term) ||
+        role.includes(term) ||
+        version.includes(term) ||
+        attrsText.includes(term)
+      );
+      const excludeMatch = parsed.excludeTerms.every((term) =>
+        !name.includes(term) &&
+        !ip.includes(term) &&
+        !id.includes(term) &&
+        !role.includes(term) &&
+        !version.includes(term) &&
+        !attrsText.includes(term)
+      );
+      return includeMatch && excludeMatch;
     });
-  }, [nodes, searchTerm]);
+  }, [nodes, searchTerm, nodeAttrsByNodeId]);
 
   const sortedNodes = useMemo(() => {
     return [...filteredNodes].sort((a, b) => compareNodes(a, b, effectiveColumn, effectiveDirection));
@@ -209,15 +323,67 @@ export function NodesTabContent({ onRefreshStateChange }: { onRefreshStateChange
 
   // Fetch nodes whenever the tab is shown (same as Cluster / Indices / etc.)
   useEffect(() => {
+    if (!externalOpenNode) return;
+    setSelectedNodeName(externalOpenNode);
+  }, [externalOpenNode]);
+
+  useEffect(() => {
+    if (!selectedNodeName || !activeCluster) return;
+    const controller = new AbortController();
+    setSelectedNodeShardsLoading(true);
+    setSelectedNodeShardsError(null);
+    void getCatShards(activeCluster, controller.signal)
+      .then((rows) => {
+        if (!Array.isArray(rows)) {
+          setSelectedNodeShardRows([]);
+          return;
+        }
+        setSelectedNodeShardRows(
+          rows.filter((row) => String(row.node ?? '').trim() === selectedNodeName)
+        );
+      })
+      .catch((error) => {
+        const msg = error instanceof Error ? error.message : 'Failed to load node shard placement';
+        setSelectedNodeShardsError(msg);
+        setSelectedNodeShardRows([]);
+      })
+      .finally(() => setSelectedNodeShardsLoading(false));
+    return () => controller.abort();
+  }, [activeCluster, selectedNodeName]);
+
+  useEffect(() => {
+    if (!selectedNodeName) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') closeNodeModal();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [closeNodeModal, selectedNodeName]);
+
+  useEffect(() => {
+    if (modalOnly || isClusterUnreachable) return;
     if (activeCluster) {
       refreshNodes();
     }
-  }, [activeCluster, refreshNodes]);
+  }, [activeCluster, modalOnly, isClusterUnreachable, refreshNodes]);
+
+  useEffect(() => {
+    if (modalOnly || isClusterUnreachable || !activeCluster) {
+      setCatAllocationRows([]);
+      return;
+    }
+    const controller = new AbortController();
+    void getCatAllocation(activeCluster, controller.signal)
+      .then((rows) => setCatAllocationRows(Array.isArray(rows) ? rows : []))
+      .catch(() => setCatAllocationRows([]));
+    return () => controller.abort();
+  }, [activeCluster, modalOnly, isClusterUnreachable, nodes]);
 
   // Global Refresh button only triggers _cat/nodes when on Nodes tab
   useEffect(() => {
+    if (modalOnly) return;
     const onRefreshNodes = async () => {
-      if (!activeCluster) return;
+      if (!activeCluster || isClusterUnreachable) return;
       onRefreshStateChange?.(true);
       try {
         await refreshNodes();
@@ -227,9 +393,301 @@ export function NodesTabContent({ onRefreshStateChange }: { onRefreshStateChange
     };
     window.addEventListener('refreshNodes', onRefreshNodes);
     return () => window.removeEventListener('refreshNodes', onRefreshNodes);
-  }, [activeCluster, refreshNodes, onRefreshStateChange]);
+  }, [activeCluster, modalOnly, isClusterUnreachable, refreshNodes, onRefreshStateChange]);
+
+  const selectedNodeRow = useMemo(() => {
+    if (!selectedNodeName) return null;
+    return nodes.find((row) => row.name === selectedNodeName || row.id === selectedNodeName) ?? null;
+  }, [nodes, selectedNodeName]);
+
+  const allocationByNodeKey = useMemo(() => {
+    const byKey = new Map<string, CatAllocationRow>();
+    for (const row of catAllocationRows) {
+      const node = String(row.node ?? '').trim();
+      const ip = String(row.ip ?? '').trim();
+      const host = String(row.host ?? '').trim();
+      if (node) byKey.set(`node:${node}`, row);
+      if (ip) byKey.set(`ip:${ip}`, row);
+      if (host) byKey.set(`host:${host}`, row);
+    }
+    return byKey;
+  }, [catAllocationRows]);
+
+  const selectedNodeStats = useMemo(() => {
+    if (!selectedNodeName || !snapshot?.nodeStats?.nodes) return null;
+    const statsEntries = Object.entries(snapshot.nodeStats.nodes);
+    const byName = statsEntries.find(([, node]) => node.name === selectedNodeName)?.[1];
+    if (byName) return byName;
+    if (selectedNodeRow?.id && snapshot.nodeStats.nodes[selectedNodeRow.id]) {
+      return snapshot.nodeStats.nodes[selectedNodeRow.id];
+    }
+    return null;
+  }, [selectedNodeName, selectedNodeRow?.id, snapshot?.nodeStats?.nodes]);
+
+  const selectedNodeRates = useMemo(() => {
+    if (!selectedNodeName || !snapshot?.nodeStats?.nodes || !prevSnapshot?.nodeStats?.nodes) {
+      return { indexingRate: 0, searchRate: 0, isWarm: false };
+    }
+
+    const currentFetchedAt = Date.parse(snapshot.fetchedAt ?? '');
+    const previousFetchedAt = Date.parse(prevSnapshot.fetchedAt ?? '');
+    const dtSeconds =
+      Number.isFinite(currentFetchedAt) && Number.isFinite(previousFetchedAt)
+        ? Math.max(0, (currentFetchedAt - previousFetchedAt) / 1000)
+        : 0;
+    if (dtSeconds <= 0) return { indexingRate: 0, searchRate: 0, isWarm: false };
+
+    const findNodeStats = (
+      nodesObj: Record<string, { name?: string; indices?: { indexing?: { index_total?: number }; search?: { query_total?: number } } }>
+    ) => {
+      const byName = Object.values(nodesObj).find((node) => node?.name === selectedNodeName);
+      if (byName) return byName;
+      if (selectedNodeRow?.id && nodesObj[selectedNodeRow.id]) return nodesObj[selectedNodeRow.id];
+      return null;
+    };
+
+    const currentNode = findNodeStats(snapshot.nodeStats.nodes as any);
+    const previousNode = findNodeStats(prevSnapshot.nodeStats.nodes as any);
+    if (!currentNode || !previousNode) return { indexingRate: 0, searchRate: 0, isWarm: false };
+
+    const currentIndexTotal = Number(currentNode.indices?.indexing?.index_total ?? 0);
+    const previousIndexTotal = Number(previousNode.indices?.indexing?.index_total ?? 0);
+    const currentSearchTotal = Number(currentNode.indices?.search?.query_total ?? 0);
+    const previousSearchTotal = Number(previousNode.indices?.search?.query_total ?? 0);
+
+    return {
+      indexingRate: Math.max(0, currentIndexTotal - previousIndexTotal) / dtSeconds,
+      searchRate: Math.max(0, currentSearchTotal - previousSearchTotal) / dtSeconds,
+      isWarm: true
+    };
+  }, [selectedNodeName, selectedNodeRow?.id, snapshot, prevSnapshot]);
+
+  useEffect(() => {
+    if (!selectedNodeName || !activeCluster || isClusterUnreachable) {
+      setLiveNodeRates(null);
+      prevLiveTotalsRef.current = null;
+      return;
+    }
+
+    let controller: AbortController | null = null;
+    let inFlight = false;
+
+    const resolveNodeStats = (
+      nodesObj: Record<string, { name?: string; indices?: { indexing?: { index_total?: number }; search?: { query_total?: number } } }>
+    ) => {
+      const byName = Object.values(nodesObj).find((node) => node?.name === selectedNodeName);
+      if (byName) return byName;
+      if (selectedNodeRow?.id && nodesObj[selectedNodeRow.id]) return nodesObj[selectedNodeRow.id];
+      return null;
+    };
+
+    const tick = async () => {
+      if (inFlight) return;
+      inFlight = true;
+      controller?.abort();
+      controller = new AbortController();
+      try {
+        const stats = await getNodeStats(activeCluster, controller.signal);
+        const nodesObj = stats?.nodes;
+        if (!nodesObj || typeof nodesObj !== 'object') return;
+        const node = resolveNodeStats(nodesObj as any);
+        if (!node) return;
+
+        const currentIndexTotal = Number(node.indices?.indexing?.index_total ?? 0);
+        const currentSearchTotal = Number(node.indices?.search?.query_total ?? 0);
+        const now = Date.now();
+        const prev = prevLiveTotalsRef.current;
+        if (prev) {
+          const dtSeconds = Math.max(0, (now - prev.fetchedAt) / 1000);
+          if (dtSeconds > 0) {
+            setLiveNodeRates({
+              indexingRate: Math.max(0, currentIndexTotal - prev.indexTotal) / dtSeconds,
+              searchRate: Math.max(0, currentSearchTotal - prev.searchTotal) / dtSeconds
+            });
+          }
+        }
+        prevLiveTotalsRef.current = {
+          indexTotal: currentIndexTotal,
+          searchTotal: currentSearchTotal,
+          fetchedAt: now
+        };
+      } catch {
+        // Keep last known rate, ignore transient polling errors.
+      } finally {
+        inFlight = false;
+      }
+    };
+
+    void tick();
+    const id = window.setInterval(() => {
+      void tick();
+    }, 10000);
+
+    return () => {
+      controller?.abort();
+      window.clearInterval(id);
+    };
+  }, [selectedNodeName, selectedNodeRow?.id, activeCluster, isClusterUnreachable]);
+
+  const placementSummary = useMemo(() => {
+    if (!selectedNodeShardRows.length) {
+      return { total: 0, primaries: 0, replicas: 0, storeBytes: 0, topIndices: [] as Array<{ index: string; shards: number }> };
+    }
+    const byIndex = new Map<string, number>();
+    let primaries = 0;
+    let replicas = 0;
+    let storeBytes = 0;
+    for (const row of selectedNodeShardRows) {
+      if (row.prirep === 'p') primaries += 1;
+      if (row.prirep === 'r') replicas += 1;
+      storeBytes += parseDiskSizeToBytes(row.store) || 0;
+      byIndex.set(row.index, (byIndex.get(row.index) ?? 0) + 1);
+    }
+    const topIndices = Array.from(byIndex.entries())
+      .map(([index, shards]) => ({ index, shards }))
+      .sort((a, b) => b.shards - a.shards || a.index.localeCompare(b.index))
+      .slice(0, 3);
+    return { total: selectedNodeShardRows.length, primaries, replicas, storeBytes, topIndices };
+  }, [selectedNodeShardRows]);
+
+  const nodeDetailModal = selectedNodeName && (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+      onMouseDown={(e) => {
+        nodeDetailBackdropMouseDownRef.current = e.target === e.currentTarget;
+      }}
+      onClick={(e) => {
+        if (e.target === e.currentTarget && nodeDetailBackdropMouseDownRef.current) {
+          closeNodeModal();
+        }
+        nodeDetailBackdropMouseDownRef.current = false;
+      }}
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="node-details-modal-title"
+    >
+      <div
+        className="max-h-[86vh] w-full max-w-5xl overflow-hidden rounded-lg border border-gray-200 bg-white shadow-xl dark:border-gray-600 dark:bg-gray-800"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-start justify-between border-b border-gray-200 px-4 py-3 dark:border-gray-600">
+          <div className="min-w-0">
+            <h3 id="node-details-modal-title" className="truncate text-sm font-semibold text-gray-900 dark:text-gray-100">
+              Node Details: <span className="font-mono">{selectedNodeName}</span>
+            </h3>
+            <div className="mt-1 grid grid-cols-1 gap-2 text-xs text-gray-600 dark:text-gray-300 sm:grid-cols-3">
+              <span>Cluster: <span className="font-medium text-gray-900 dark:text-gray-100">{activeCluster?.label ?? '—'}</span></span>
+              <span>Uptime: <span className="font-mono text-gray-900 dark:text-gray-100">{selectedNodeRow?.uptime ?? '—'}</span></span>
+              <span className="sm:text-right">
+                Node Role: <span className="font-medium text-gray-900 dark:text-gray-100">{formatNodeRoleReadable(selectedNodeRow?.['node.role'])}</span>
+              </span>
+            </div>
+            <div className="mt-1 grid grid-cols-1 gap-2 text-xs text-gray-600 dark:text-gray-300 sm:grid-cols-2">
+              <span>Node ID: <span className="font-mono text-gray-900 dark:text-gray-100">{selectedNodeRow?.id ?? '—'}</span></span>
+              <span>IP: <span className="font-mono text-gray-900 dark:text-gray-100">{selectedNodeRow?.ip ?? '—'}</span></span>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={closeNodeModal}
+            className="rounded p-1.5 text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-600"
+            aria-label="Close"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+        <div className="max-h-[62vh] overflow-y-auto p-4">
+          <div className="space-y-4">
+            <div className="rounded border border-gray-200 bg-gray-50 p-3 text-sm dark:border-gray-600 dark:bg-gray-700/40">
+              <div className="font-medium text-gray-900 dark:text-gray-100">Overview</div>
+              <div className="mt-1 font-mono text-gray-700 dark:text-gray-200">
+                CPU: {selectedNodeRow?.cpu ?? '—'}%&nbsp;&nbsp; RAM: {selectedNodeRow?.['ram.percent'] ?? '—'}%&nbsp;&nbsp; Heap: {selectedNodeRow?.['heap.percent'] ?? '—'}%&nbsp;&nbsp; Disk: {selectedNodeRow?.['disk.used_percent'] ?? '—'}%
+              </div>
+              <div className="mt-1 text-xs text-gray-600 dark:text-gray-300">
+                Disk Used: {selectedNodeRow?.['disk.used'] && selectedNodeRow?.['disk.total'] ? `${selectedNodeRow['disk.used']} / ${selectedNodeRow['disk.total']}` : '—'}
+              </div>
+              <div className="mt-1 text-xs text-gray-600 dark:text-gray-300">
+                Shards: {placementSummary.total} (Primary: {placementSummary.primaries}, Replica: {placementSummary.replicas})
+              </div>
+            </div>
+            <div className="rounded border border-gray-200 bg-gray-50 p-3 text-sm dark:border-gray-600 dark:bg-gray-700/40">
+              <div className="font-medium text-gray-900 dark:text-gray-100">Quick Placement Summary</div>
+              {selectedNodeShardsLoading ? (
+                <div className="mt-2 text-xs text-gray-500 dark:text-gray-400">Loading shard placement...</div>
+              ) : selectedNodeShardsError ? (
+                <div className="mt-2 text-xs text-rose-600 dark:text-rose-400">{selectedNodeShardsError}</div>
+              ) : (
+                <>
+                  <div className="mt-1 text-xs text-gray-600 dark:text-gray-300">
+                    <p>Top indices on this node:</p>
+                    {placementSummary.topIndices.length > 0 ? (
+                      <div className="mt-1 space-y-0.5">
+                        {placementSummary.topIndices.map((item) => (
+                          <div key={item.index} className="font-mono break-all">
+                            - {item.index} ({item.shards})
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="mt-1">—</p>
+                    )}
+                  </div>
+                  <div className="mt-1 text-xs text-gray-600 dark:text-gray-300">
+                    Estimated store on node: {placementSummary.storeBytes > 0 ? formatBytes(placementSummary.storeBytes) : '—'}
+                  </div>
+                </>
+              )}
+            </div>
+            {selectedNodeStats && (
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+              <div className="rounded border border-gray-200 bg-gray-50 p-3 text-sm dark:border-gray-600 dark:bg-gray-700/40">
+                <p className="text-xs text-gray-500 dark:text-gray-400">Indexing rate</p>
+                <p className="mt-1 font-mono text-gray-900 dark:text-gray-100">
+                  {liveNodeRates != null || selectedNodeRates.isWarm
+                    ? `${(liveNodeRates?.indexingRate ?? selectedNodeRates.indexingRate).toFixed(2)}/sec`
+                    : '—'}
+                </p>
+              </div>
+              <div className="rounded border border-gray-200 bg-gray-50 p-3 text-sm dark:border-gray-600 dark:bg-gray-700/40">
+                <p className="text-xs text-gray-500 dark:text-gray-400">Search rate</p>
+                <p className="mt-1 font-mono text-gray-900 dark:text-gray-100">
+                  {liveNodeRates != null || selectedNodeRates.isWarm
+                    ? `${(liveNodeRates?.searchRate ?? selectedNodeRates.searchRate).toFixed(2)}/sec`
+                    : '—'}
+                </p>
+              </div>
+              </div>
+            )}
+            <div className="rounded border border-gray-200 bg-gray-50 p-3 text-sm dark:border-gray-600 dark:bg-gray-700/40">
+              <div className="text-xs text-gray-500 dark:text-gray-400">Node allocation summary</div>
+              <div className="mt-1 text-sm text-gray-700 dark:text-gray-200">
+                Total shards: {placementSummary.total} · Primary: {placementSummary.primaries} · Replica: {placementSummary.replicas}
+              </div>
+            </div>
+            <div className="rounded border border-gray-200 bg-gray-50 p-3 text-sm dark:border-gray-600 dark:bg-gray-700/40">
+              <div className="text-xs text-gray-500 dark:text-gray-400">Attributes</div>
+              {(() => {
+                const attrs = nodeAttrsByNodeId?.[selectedNodeRow?.name ?? ''] ?? nodeAttrsByNodeId?.[selectedNodeRow?.id ?? ''] ?? [];
+                if (!attrs.length) return <div className="mt-1 text-xs text-gray-500 dark:text-gray-400">No attributes found.</div>;
+                return (
+                  <div className="mt-2 space-y-1 text-xs font-mono">
+                    {attrs.map((a, idx) => (
+                      <div key={`${a.attr}-${idx}`} className="text-gray-700 dark:text-gray-200">
+                        {a.attr}={DEFAULT_NODE_ATTRS.has(a.attr) ? '—' : a.value}
+                      </div>
+                    ))}
+                  </div>
+                );
+              })()}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
 
   if (!activeCluster) {
+    if (modalOnly) return nodeDetailModal;
     return (
       <div className="rounded-lg border border-gray-300 bg-white p-4 text-center text-sm text-gray-500 dark:bg-gray-800 dark:border-gray-600 dark:text-gray-400">
         No cluster selected.
@@ -238,6 +696,7 @@ export function NodesTabContent({ onRefreshStateChange }: { onRefreshStateChange
   }
 
   if (nodesLoading && nodes.length === 0) {
+    if (modalOnly) return nodeDetailModal;
     return (
       <div className="flex items-center justify-center rounded-lg border border-gray-300 bg-white p-8 dark:bg-gray-800 dark:border-gray-600">
         <RefreshCw className="h-6 w-6 animate-spin text-gray-400" />
@@ -246,6 +705,7 @@ export function NodesTabContent({ onRefreshStateChange }: { onRefreshStateChange
   }
 
   if (nodesError) {
+    if (modalOnly) return nodeDetailModal;
     return (
       <div className="rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700 dark:border-rose-800 dark:bg-rose-950/30 dark:text-rose-300">
         {nodesError}
@@ -260,6 +720,10 @@ export function NodesTabContent({ onRefreshStateChange }: { onRefreshStateChange
     );
   }
 
+  if (modalOnly) {
+    return nodeDetailModal;
+  }
+
   return (
     <div className="flex flex-col gap-4">
       <section className="tab-section-card">
@@ -267,7 +731,7 @@ export function NodesTabContent({ onRefreshStateChange }: { onRefreshStateChange
           <div className="flex min-w-0 items-center gap-2 shrink-0">
             <h2 className="text-sm font-semibold text-gray-900 dark:text-gray-100">Nodes</h2>
             <InfoPopup title="Nodes" modalTitle="Nodes" open={infoOpen} onOpen={() => setInfoOpen(true)} onClose={() => setInfoOpen(false)}>
-              <p>Node list from <code className="bg-gray-100 dark:bg-gray-700 px-1 rounded">GET /_cat/nodes</code> with extended columns: IP, name, version, role, master, heap %, RAM %, CPU, load, disk %, shards. Requires <code className="bg-gray-100 dark:bg-gray-700 px-1 rounded">monitor</code> cluster privilege.</p>
+              <p>Node metadata comes from <code className="bg-gray-100 dark:bg-gray-700 px-1 rounded">GET /_cat/nodes</code>; shard and disk allocation stats come from <code className="bg-gray-100 dark:bg-gray-700 px-1 rounded">GET /_cat/allocation</code>. Requires <code className="bg-gray-100 dark:bg-gray-700 px-1 rounded">monitor</code> cluster privilege.</p>
             </InfoPopup>
             {nodesLoading && nodes.length > 0 && (
               <span className="inline-flex items-center gap-1 text-xs text-gray-500 dark:text-gray-400">
@@ -328,7 +792,6 @@ export function NodesTabContent({ onRefreshStateChange }: { onRefreshStateChange
                 {([
                   { label: 'Name', sortKey: 'name' as SortKey, sortable: true },
                   { label: 'Uptime', sortKey: 'name' as SortKey, sortable: false },
-                  { label: 'Node ID', sortKey: 'id' as SortKey, sortable: false },
                   { label: 'IP', sortKey: 'ip' as SortKey, sortable: false },
                   { label: 'Shards', sortKey: 'shards' as SortKey, sortable: false },
                   { label: 'Node Role', sortKey: 'node.role' as SortKey, sortable: true },
@@ -367,13 +830,32 @@ export function NodesTabContent({ onRefreshStateChange }: { onRefreshStateChange
                   key={r.id ?? r.name ?? idx}
                   className="border-b border-gray-200 text-gray-800 transition hover:bg-blue-50 dark:border-gray-700 dark:text-gray-200 dark:hover:bg-gray-700/50"
                 >
+                  {(() => {
+                    const allocationRow =
+                      allocationByNodeKey.get(`node:${String(r.name ?? '').trim()}`) ??
+                      allocationByNodeKey.get(`ip:${String(r.ip ?? '').trim()}`) ??
+                      allocationByNodeKey.get(`host:${String(r.ip ?? '').trim()}`) ??
+                      null;
+                    const shardCount = allocationRow?.shards ?? r.shards ?? '—';
+                    const diskUsedPercent = allocationRow?.['disk.percent'] ?? r['disk.used_percent'];
+                    const diskUsed = allocationRow?.['disk.used'] ?? r['disk.used'];
+                    const diskTotal = allocationRow?.['disk.total'] ?? r['disk.total'];
+                    const diskTooltip = buildDiskTooltip(allocationRow);
+                    return (
+                      <>
                   <td className="px-3 py-2 font-mono tab-content-value text-gray-900 dark:text-gray-100 whitespace-nowrap" title={r.master === '*' ? 'elected-master node' : undefined}>
-                    {r.master === '*' ? '⭐ ' : ''}{r.name ?? '—'}
+                    <button
+                      type="button"
+                      onClick={() => openNodeDetails(r.name ?? '')}
+                      className="text-left font-mono text-blue-600 hover:underline dark:text-blue-400"
+                      title={r.name ? `Open node details for ${r.name}` : undefined}
+                    >
+                      {r.master === '*' ? '⭐ ' : ''}{r.name ?? '—'}
+                    </button>
                   </td>
                   <td className="px-3 py-2 tab-content-value text-gray-600 dark:text-gray-400 whitespace-nowrap">{r.uptime ?? '—'}</td>
-                  <td className="px-3 py-2 font-mono tab-content-value text-gray-600 dark:text-gray-400 break-all">{r.id ?? '—'}</td>
                   <td className="px-3 py-2 font-mono tab-content-value text-gray-800 dark:text-gray-200">{r.ip ?? '—'}</td>
-                  <td className="px-3 py-2 text-right tabular-nums tab-content-value text-gray-800 dark:text-gray-200">{r.shards ?? '—'}</td>
+                  <td className="px-3 py-2 text-right tabular-nums tab-content-value text-gray-800 dark:text-gray-200">{shardCount}</td>
                   <td className="px-3 py-2 tab-content-value text-gray-800 dark:text-gray-200" title={formatNodeRoleTooltip(r['node.role'] ?? '')}>{r['node.role'] ?? '—'}</td>
                   <td className="px-3 py-2 tab-content-value text-gray-500 dark:text-gray-400 align-top">
                     {(() => {
@@ -432,14 +914,17 @@ export function NodesTabContent({ onRefreshStateChange }: { onRefreshStateChange
                       className="tab-content-value"
                     />
                   </td>
-                  <td className="px-3 py-2 min-w-[100px]">
+                  <td className="px-3 py-2 min-w-[100px]" title={diskTooltip}>
                     <ProgressBar
-                      value={parsePercent(r['disk.used_percent'])}
+                      value={parsePercent(diskUsedPercent)}
                       labelPosition="top"
-                      rightLabel={formatUsedTotal(r['disk.used'], r['disk.total'])}
+                      rightLabel={formatUsedTotal(diskUsed, diskTotal)}
                       className="tab-content-value"
                     />
                   </td>
+                      </>
+                    );
+                  })()}
                 </tr>
               ))
               )}
@@ -483,7 +968,15 @@ export function NodesTabContent({ onRefreshStateChange }: { onRefreshStateChange
       {nodeAttrsPopover && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
-          onClick={() => setNodeAttrsPopover(null)}
+          onMouseDown={(e) => {
+            nodeAttrsBackdropMouseDownRef.current = e.target === e.currentTarget;
+          }}
+          onClick={(e) => {
+            if (e.target === e.currentTarget && nodeAttrsBackdropMouseDownRef.current) {
+              setNodeAttrsPopover(null);
+            }
+            nodeAttrsBackdropMouseDownRef.current = false;
+          }}
           role="dialog"
           aria-modal="true"
           aria-labelledby="node-attrs-popover-title"
@@ -533,6 +1026,7 @@ export function NodesTabContent({ onRefreshStateChange }: { onRefreshStateChange
           </div>
         </div>
       )}
+      {nodeDetailModal}
     </div>
   );
 }

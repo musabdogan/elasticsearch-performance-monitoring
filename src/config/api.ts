@@ -46,6 +46,7 @@ export const apiConfig = {
     clusterHealthFull: '/_cluster/health?filter_path=cluster_name,status,number_of_nodes,number_of_data_nodes,active_shards,active_primary_shards,relocating_shards,initializing_shards,unassigned_shards,delayed_unassigned_shards,number_of_pending_tasks,task_max_waiting_in_queue_millis,active_shards_percent_as_number',
     clusterStats: '/_cluster/stats',
     catShards: '/_cat/shards?v&format=json&h=index,shard,prirep,state,unassigned.reason,node&s=state,index',
+    catAllocation: '/_cat/allocation?v&format=json&h=shards,disk.indices,disk.used,disk.avail,disk.total,disk.percent,host,ip,node&s=shards:desc',
     catPendingTasks: '/_cat/pending_tasks?v&format=json',
     catRecoveryActive: '/_cat/recovery?v&format=json&h=i,s,t,ty,st,source_node,target_node,f,fp,b,bp,translog_ops_percent&s=ty:desc,index,bp:desc&active_only=true',
     catNodesExtended: '/_cat/nodes?v&format=json&h=ip,id,name,version,heap.percent,heap.current,heap.max,ram.percent,ram.current,ram.max,node.role,master,cpu,load_1m,load_5m,load_15m,disk.used_percent,disk.used,disk.total,shards,uptime&full_id=true',

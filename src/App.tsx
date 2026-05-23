@@ -8,6 +8,7 @@ import { ClusterTabContent } from '@/components/tabs/ClusterTabContent';
 import { IndexingSearchTabContent } from '@/components/tabs/IndexingSearchTabContent';
 import { IndicesTabContent } from '@/components/tabs/IndicesTabContent';
 import { NodesTabContent } from '@/components/tabs/NodesTabContent';
+import { SearchTabContent } from '@/components/tabs/SearchTabContent';
 import { ShardsTabContent } from '@/components/tabs/ShardsTabContent';
 import { SnapshotsTabContent } from '@/components/tabs/SnapshotsTabContent';
 import { TemplatesTabContent } from '@/components/tabs/TemplatesTabContent';
@@ -27,6 +28,7 @@ const TAB_REFRESH_EVENTS: Record<Exclude<MainTab, 'indexing-search'>, string> = 
   cluster: 'refreshCluster',
   nodes: 'refreshNodes',
   indices: 'refreshIndices',
+  search: 'refreshSearch',
   shards: 'refreshShards',
   templates: 'refreshTemplates',
   snapshots: 'refreshSnapshots'
@@ -314,6 +316,7 @@ export default function App() {
   const [mainTab, setMainTab] = useState<MainTab>('indexing-search');
   const [tabRefreshing, setTabRefreshing] = useState(false);
   const [globalIndexModalIndex, setGlobalIndexModalIndex] = useState<string | null>(null);
+  const [globalNodeModalNode, setGlobalNodeModalNode] = useState<string | null>(null);
   /** Alert IDs already seen when user opened the panel; badge shows only unseen (new) alerts until next open. */
   const [seenAlertIdsByCluster, setSeenAlertIdsByCluster] = useState<Record<string, string[]>>({});
 
@@ -580,15 +583,37 @@ export default function App() {
             {/* Tab content - overflow-y-auto so cluster/nodes/snapshots tabs can scroll */}
             <div className="flex-1 min-h-0 flex flex-col overflow-y-auto overflow-x-hidden">
               {mainTab === 'indexing-search' && (
-                <IndexingSearchTabContent onOpenIndexDetails={(indexName) => setGlobalIndexModalIndex(indexName)} />
+                <IndexingSearchTabContent
+                  onOpenIndexDetails={(indexName) => setGlobalIndexModalIndex(indexName)}
+                  onOpenNodeDetails={(nodeName) => setGlobalNodeModalNode(nodeName)}
+                />
               )}
-              {mainTab === 'cluster' && <ClusterTabContent onRefreshStateChange={setTabRefreshing} />}
-              {mainTab === 'nodes' && <NodesTabContent onRefreshStateChange={setTabRefreshing} />}
-              {mainTab === 'indices' && <IndicesTabContent onRefreshStateChange={setTabRefreshing} />}
+              {mainTab === 'cluster' && (
+                <ClusterTabContent
+                  onRefreshStateChange={setTabRefreshing}
+                  onOpenNodeDetails={(nodeName) => setGlobalNodeModalNode(nodeName)}
+                />
+              )}
+              {mainTab === 'nodes' && (
+                <NodesTabContent
+                  onRefreshStateChange={setTabRefreshing}
+                  onOpenNodeDetails={(nodeName) => setGlobalNodeModalNode(nodeName)}
+                />
+              )}
+              {mainTab === 'indices' && (
+                <IndicesTabContent
+                  onRefreshStateChange={setTabRefreshing}
+                  onOpenNodeDetails={(nodeName) => setGlobalNodeModalNode(nodeName)}
+                />
+              )}
+              {mainTab === 'search' && (
+                <SearchTabContent onRefreshStateChange={setTabRefreshing} />
+              )}
               {mainTab === 'shards' && (
                 <ShardsTabContent
                   onRefreshStateChange={setTabRefreshing}
                   onOpenIndexDetails={(indexName) => setGlobalIndexModalIndex(indexName)}
+                  onOpenNodeDetails={(nodeName) => setGlobalNodeModalNode(nodeName)}
                 />
               )}
               {mainTab === 'templates' && <TemplatesTabContent onRefreshStateChange={setTabRefreshing} />}
@@ -596,6 +621,7 @@ export default function App() {
                 <SnapshotsTabContent
                   onRefreshStateChange={setTabRefreshing}
                   onOpenIndexDetails={(indexName) => setGlobalIndexModalIndex(indexName)}
+                  onOpenNodeDetails={(nodeName) => setGlobalNodeModalNode(nodeName)}
                   isIndexDetailModalOpen={globalIndexModalIndex != null}
                 />
               )}
@@ -604,6 +630,11 @@ export default function App() {
               modalOnly
               externalOpenIndex={globalIndexModalIndex}
               onExternalModalClose={() => setGlobalIndexModalIndex(null)}
+            />
+            <NodesTabContent
+              modalOnly
+              externalOpenNode={globalNodeModalNode}
+              onExternalModalClose={() => setGlobalNodeModalNode(null)}
             />
           </>
         )}

@@ -8,6 +8,7 @@ export type MainTab =
   | 'cluster'
   | 'nodes'
   | 'indices'
+  | 'search'
   | 'shards'
   | 'templates'
   | 'snapshots';
@@ -17,6 +18,7 @@ const TAB_LABELS: Record<MainTab, string> = {
   'cluster': 'Cluster',
   'nodes': 'Nodes',
   'indices': 'Indices',
+  'search': 'Search',
   'shards': 'Shards',
   'templates': 'Templates',
   'snapshots': 'Snapshots'
@@ -94,6 +96,7 @@ export function PageHeader({ onRefresh, refreshing = false, mainTab, onTabChange
                   'indices',
                   'shards',
                   'templates',
+                  'search',
                   'snapshots'
                 ] as const
               ).map((tab) => (

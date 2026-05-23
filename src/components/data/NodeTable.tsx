@@ -5,6 +5,7 @@ import { InfoPopup } from '@/components/ui/InfoPopup';
 import { Search, X } from 'lucide-react';
 import type { NodeInfo, NodeStats } from '@/types/api';
 import { useMonitoring } from '@/context/MonitoringProvider';
+import { hasSearchTerms, matchesParsedTermsInAnyText, parseSearchTerms } from '@/utils/search';
 
 const TABLE_ID = 'node-statistics';
 
@@ -67,9 +68,10 @@ interface NodeTableProps {
   loading?: boolean;
   /** When `panel`, uses the same tab-section-card layout as other main tabs (Indexing & Search). */
   variant?: 'plain' | 'panel';
+  onOpenNodeDetails?: (nodeName: string) => void;
 }
 
-const NodeTable = memo<NodeTableProps>(({ nodeStats, nodes = [], loading = false, variant = 'plain' }) => {
+const NodeTable = memo<NodeTableProps>(({ nodeStats, nodes = [], loading = false, variant = 'plain', onOpenNodeDetails }) => {
   const isPanel = variant === 'panel';
   const { snapshot, prevSnapshot, pollInterval } = useMonitoring();
   const [searchTerm, setSearchTerm] = useState('');
@@ -167,15 +169,10 @@ const NodeTable = memo<NodeTableProps>(({ nodeStats, nodes = [], loading = false
 
   // Filter data based on search term
   const filteredData = useMemo(() => {
-    if (!searchTerm.trim()) {
-      return nodeData;
-    }
-    
-    const term = searchTerm.toLowerCase();
-    return nodeData.filter(node => 
-      node.name.toLowerCase().includes(term) ||
-      node.ip.toLowerCase().includes(term) ||
-      node.nodeRole.toLowerCase().includes(term)
+    const parsed = parseSearchTerms(searchTerm);
+    if (!hasSearchTerms(parsed)) return nodeData;
+    return nodeData.filter((node) =>
+      matchesParsedTermsInAnyText([node.name, node.ip, node.nodeRole], parsed)
     );
   }, [nodeData, searchTerm]);
 
@@ -357,7 +354,21 @@ const NodeTable = memo<NodeTableProps>(({ nodeStats, nodes = [], loading = false
               key: 'name',
               header: 'Node Name',
               sortable: true,
-              className: 'font-mono tab-content-value'
+              className: 'font-mono tab-content-value',
+              render: (node) => (
+                <button
+                  type="button"
+                  onClick={() => onOpenNodeDetails?.(node.name)}
+                  className={`text-left font-mono ${
+                    onOpenNodeDetails
+                      ? 'text-blue-600 hover:underline dark:text-blue-400'
+                      : 'text-gray-900 dark:text-gray-100'
+                  }`}
+                  title={onOpenNodeDetails ? `Open node details for ${node.name}` : node.name}
+                >
+                  {node.name}
+                </button>
+              )
             },
             {
               key: 'nodeRole',

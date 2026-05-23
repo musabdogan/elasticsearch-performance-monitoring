@@ -7,6 +7,7 @@ import { DataTable } from '@/components/data/DataTable';
 import Pagination from '@/components/data/Pagination';
 import { InfoPopup } from '@/components/ui/InfoPopup';
 import { RefreshCw, Search, X, Copy, Check, ChevronDown, ChevronRight } from 'lucide-react';
+import { hasSearchTerms, matchesParsedTermsInAnyText, parseSearchTerms } from '@/utils/search';
 
 const MONITOR_SNAPSHOT_MESSAGE =
   'To view snapshots, use the built-in snapshot_user role for your monitoring user.';
@@ -401,14 +402,16 @@ export function SnapshotsTabContent(
   {
     onRefreshStateChange,
     onOpenIndexDetails,
+    onOpenNodeDetails,
     isIndexDetailModalOpen
   }: {
     onRefreshStateChange?: (loading: boolean) => void;
     onOpenIndexDetails?: (indexName: string) => void;
+    onOpenNodeDetails?: (nodeName: string) => void;
     isIndexDetailModalOpen?: boolean;
   } = {}
 ) {
-  const { activeCluster } = useMonitoring();
+  const { activeCluster, isClusterUnreachable } = useMonitoring();
   const activeClusterRef = useRef(activeCluster);
   activeClusterRef.current = activeCluster;
   /** Stable key so effects/callbacks run only when cluster actually changes */
@@ -437,6 +440,7 @@ export function SnapshotsTabContent(
   const [snapshotDetailLoading, setSnapshotDetailLoading] = useState(false);
   const [snapshotDetailError, setSnapshotDetailError] = useState<string | null>(null);
   const [snapshotDetail, setSnapshotDetail] = useState<SnapshotStatusEntry | null>(null);
+  const snapshotDetailBackdropMouseDownRef = useRef(false);
   const [snapshotGlobalStateInfoOpen, setSnapshotGlobalStateInfoOpen] = useState(false);
   const [snapshotIndexSearchTerm, setSnapshotIndexSearchTerm] = useState('');
   const snapshotStatusCacheRef = useRef<Record<string, SnapshotStatusEntry>>({});
@@ -459,12 +463,10 @@ export function SnapshotsTabContent(
     [snapshotDetail]
   );
   const filteredSnapshotIndexRows = useMemo(() => {
-    const term = snapshotIndexSearchTerm.trim().toLowerCase();
-    if (!term) return snapshotIndexRows;
+    const parsed = parseSearchTerms(snapshotIndexSearchTerm);
+    if (!hasSearchTerms(parsed)) return snapshotIndexRows;
     return snapshotIndexRows.filter((row) => {
-      const indexHit = row.index.toLowerCase().includes(term);
-      const reasonHit = (row.primaryReason ?? '').toLowerCase().includes(term);
-      return indexHit || reasonHit;
+      return matchesParsedTermsInAnyText([row.index, row.primaryReason ?? ''], parsed);
     });
   }, [snapshotIndexRows, snapshotIndexSearchTerm]);
 
@@ -536,7 +538,7 @@ export function SnapshotsTabContent(
 
   // Auto-refresh: while snapshot detail popup is open, re-fetch status every 10s.
   useEffect(() => {
-    if (!snapshotDetailOpen) return;
+    if (!snapshotDetailOpen || isClusterUnreachable) return;
     // Don't start the 10s polling loop until the initial detail request completes.
     if (snapshotDetailLoading) return;
     const cluster = activeClusterRef.current;
@@ -584,7 +586,7 @@ export function SnapshotsTabContent(
       snapshotDetailPollAbortRef.current = null;
       snapshotDetailPollInFlightRef.current = false;
     };
-  }, [snapshotDetailOpen, snapshotDetailTarget, snapshotDetailLoading, clusterKey]);
+  }, [snapshotDetailOpen, snapshotDetailTarget, snapshotDetailLoading, clusterKey, isClusterUnreachable]);
 
   useEffect(() => {
     if (!snapshotDetailOpen) return;
@@ -600,7 +602,7 @@ export function SnapshotsTabContent(
 
   const fetchSnapshots = useCallback(async () => {
     const cluster = activeClusterRef.current;
-    if (!cluster) return;
+    if (!cluster || isClusterUnreachable) return;
     setLoadingSnapshots(true);
     setError(null);
     setForbidden(false);
@@ -667,11 +669,11 @@ export function SnapshotsTabContent(
     } finally {
       setLoadingSnapshots(false);
     }
-  }, [clusterKey]);
+  }, [clusterKey, isClusterUnreachable]);
 
   // Single effect: when cluster changes, fetch snapshots once (one _cat/snapshots call)
   useEffect(() => {
-    if (clusterKey) {
+    if (clusterKey && !isClusterUnreachable) {
       setError(null);
       setSnapshots([]);
       setRepoNames([]);
@@ -703,7 +705,7 @@ export function SnapshotsTabContent(
       snapshotStatusCacheRef.current = {};
       snapshotDetailRequestKeyRef.current = null;
     }
-  }, [clusterKey, fetchSnapshots]);
+  }, [clusterKey, fetchSnapshots, isClusterUnreachable]);
 
   // Global Refresh button only refreshes this tab when on Snapshots (indexing/search APIs are not called)
   useEffect(() => {
@@ -718,7 +720,7 @@ export function SnapshotsTabContent(
     };
     window.addEventListener('refreshSnapshots', onRefreshSnapshots);
     return () => window.removeEventListener('refreshSnapshots', onRefreshSnapshots);
-  }, [activeCluster, fetchSnapshots, onRefreshStateChange]);
+  }, [activeCluster, isClusterUnreachable, fetchSnapshots, onRefreshStateChange]);
 
   const getInitialSortState = useCallback((): { column: string; direction: SortDirection } => {
     try {
@@ -746,26 +748,28 @@ export function SnapshotsTabContent(
 
   const filteredData = useMemo(() => {
     let data = filteredByRepo;
-    const q = searchTerm.trim();
-    if (!q) return data;
-    const term = q.toLowerCase();
+    const parsed = parseSearchTerms(searchTerm);
+    if (!hasSearchTerms(parsed)) return data;
     return data.filter((s) => {
-      const metaHit =
-        (s.id ?? '').toLowerCase().includes(term) ||
-        (s.repository ?? '').toLowerCase().includes(term) ||
-        (s.status ?? '').toLowerCase().includes(term) ||
-        (s.start_time ?? '').toLowerCase().includes(term) ||
-        (s.end_time ?? '').toLowerCase().includes(term) ||
-        (s.duration ?? '').toLowerCase().includes(term) ||
-        (s.indices ?? '').toLowerCase().includes(term) ||
-        (s.data_streams ?? '').toLowerCase().includes(term) ||
-        (s.successful_shards ?? '').includes(term) ||
-        (s.failed_shards ?? '').includes(term) ||
-        (s.total_shards ?? '').includes(term) ||
-        (s.remaining_shards ?? '').includes(term);
       const list = s.indicesList ?? [];
-      const indexHit = list.some((idx) => idx.toLowerCase().includes(term));
-      return metaHit || indexHit;
+      return matchesParsedTermsInAnyText(
+        [
+          s.id ?? '',
+          s.repository ?? '',
+          s.status ?? '',
+          s.start_time ?? '',
+          s.end_time ?? '',
+          s.duration ?? '',
+          s.indices ?? '',
+          s.data_streams ?? '',
+          String(s.successful_shards ?? ''),
+          String(s.failed_shards ?? ''),
+          String(s.total_shards ?? ''),
+          String(s.remaining_shards ?? ''),
+          ...list
+        ],
+        parsed
+      );
     });
   }, [filteredByRepo, searchTerm]);
 
@@ -1238,7 +1242,23 @@ export function SnapshotsTabContent(
                           {f.index != null && <div><span className="text-gray-500 dark:text-gray-400">Index:</span> <span className="font-mono">{String(f.index)}</span></div>}
                           {f.shard_id != null && <div><span className="text-gray-500 dark:text-gray-400">Shard:</span> {f.shard_id}</div>}
                           {f.reason != null && <div className="mt-0.5 text-red-700 dark:text-red-300">{String(f.reason)}</div>}
-                          {f.node_id != null && <div className="mt-0.5 font-mono text-[11px] text-gray-600 dark:text-gray-400">Node: {String(f.node_id)}</div>}
+                          {f.node_id != null && (
+                            <div className="mt-0.5 font-mono text-[11px] text-gray-600 dark:text-gray-400">
+                              Node:{' '}
+                              {onOpenNodeDetails ? (
+                                <button
+                                  type="button"
+                                  onClick={() => onOpenNodeDetails(String(f.node_id))}
+                                  className="text-blue-600 hover:underline dark:text-blue-400"
+                                  title={`Open node details for ${String(f.node_id)}`}
+                                >
+                                  {String(f.node_id)}
+                                </button>
+                              ) : (
+                                String(f.node_id)
+                              )}
+                            </div>
+                          )}
                           {f.status != null && <div className="text-[11px] text-gray-500">Status: {String(f.status)}</div>}
                           {f.type != null && <div className="text-[11px] text-gray-500">Type: {String(f.type)}</div>}
                         </li>
@@ -1255,10 +1275,14 @@ export function SnapshotsTabContent(
         createPortal(
           <div
             className="fixed inset-0 z-40 flex items-center justify-center bg-black/50 backdrop-blur-[1px]"
+            onMouseDown={(e) => {
+              snapshotDetailBackdropMouseDownRef.current = e.target === e.currentTarget;
+            }}
             onClick={(e) => {
-              if (e.target === e.currentTarget) {
+              if (e.target === e.currentTarget && snapshotDetailBackdropMouseDownRef.current) {
                 closeSnapshotDetail();
               }
+              snapshotDetailBackdropMouseDownRef.current = false;
             }}
           >
             <div className="w-full max-w-3xl mx-4 max-h-[88vh] overflow-hidden rounded-xl border border-gray-200 bg-white shadow-2xl dark:border-gray-700 dark:bg-gray-800">

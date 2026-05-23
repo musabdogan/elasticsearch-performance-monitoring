@@ -16,16 +16,19 @@ const INDEXING_POLL_OPTIONS = [
 
 interface IndexingSearchTabContentProps {
   onOpenIndexDetails: (indexName: string) => void;
+  onOpenNodeDetails?: (nodeName: string) => void;
 }
 
-export function IndexingSearchTabContent({ onOpenIndexDetails }: IndexingSearchTabContentProps) {
+export function IndexingSearchTabContent({ onOpenIndexDetails, onOpenNodeDetails }: IndexingSearchTabContentProps) {
   const {
     snapshot,
     prevSnapshot,
     performanceMetrics,
     pollInterval,
     setPollInterval,
-    lastUpdated
+    lastUpdated,
+    loading,
+    isClusterUnreachable
   } = useMonitoring();
   const [clusterStatsInfoOpen, setClusterStatsInfoOpen] = useState(false);
 
@@ -37,7 +40,14 @@ export function IndexingSearchTabContent({ onOpenIndexDetails }: IndexingSearchT
     };
   }, [snapshot, performanceMetrics]);
 
+  if (isClusterUnreachable) {
+    return null;
+  }
+
   if (!snapshot || !performanceData) {
+    if (!loading) {
+      return null;
+    }
     return (
       <div className="flex flex-1 items-center justify-center rounded-lg border border-gray-300 bg-white p-8 dark:bg-gray-800 dark:border-gray-600">
         <p className="text-sm text-gray-500 dark:text-gray-400">Loading cluster data…</p>
@@ -121,7 +131,12 @@ export function IndexingSearchTabContent({ onOpenIndexDetails }: IndexingSearchT
         </div>
         <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
           {snapshot.nodeStats && (
-            <NodeTable variant="panel" nodeStats={snapshot.nodeStats} nodes={snapshot.nodes} />
+            <NodeTable
+              variant="panel"
+              nodeStats={snapshot.nodeStats}
+              nodes={snapshot.nodes}
+              onOpenNodeDetails={onOpenNodeDetails}
+            />
           )}
         </div>
       </section>

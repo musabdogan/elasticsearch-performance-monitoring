@@ -1,4 +1,4 @@
-import { memo, useEffect, useState } from 'react';
+import { memo, useEffect, useRef, useState } from 'react';
 import { X, Copy, Check } from 'lucide-react';
 import type { AlertInstance } from '../../types/alerts';
 import { ALERT_COLORS, ALERT_DETAIL_CONFIG } from '../../config/alerts';
@@ -39,6 +39,7 @@ function CodeBlockWithCopy({ text }: { text: string }) {
 }
 
 const AlertDetailModal = memo<AlertDetailModalProps>(({ alert, onClose }) => {
+  const backdropMouseDownRef = useRef(false);
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onClose();
@@ -85,8 +86,12 @@ const AlertDetailModal = memo<AlertDetailModalProps>(({ alert, onClose }) => {
   return (
     <div
       className="fixed inset-0 z-[10000] flex items-center justify-center bg-black/50 backdrop-blur-sm"
+      onMouseDown={(e) => {
+        backdropMouseDownRef.current = e.target === e.currentTarget;
+      }}
       onClick={(e) => {
-        if (e.target === e.currentTarget) onClose();
+        if (e.target === e.currentTarget && backdropMouseDownRef.current) onClose();
+        backdropMouseDownRef.current = false;
       }}
     >
       <div

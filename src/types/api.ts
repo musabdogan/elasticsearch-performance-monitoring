@@ -377,6 +377,19 @@ export interface CatNodeExtendedRow {
   uptime?: string;
 }
 
+/** _cat/allocation row used for node-level shard + disk allocation stats. */
+export interface CatAllocationRow {
+  shards?: string;
+  'disk.indices'?: string;
+  'disk.used'?: string;
+  'disk.avail'?: string;
+  'disk.total'?: string;
+  'disk.percent'?: string;
+  host?: string;
+  ip?: string;
+  node?: string;
+}
+
 /** GET _cat/nodeattrs row. One row per (node, attr). */
 export interface CatNodeAttrsRow {
   node?: string;
@@ -747,4 +760,25 @@ export interface LegacyTemplateItem {
 }
 
 export type LegacyTemplateListResponse = Record<string, Omit<LegacyTemplateItem, 'name'>>;
+
+// ——— Search tab ———
+
+export interface SearchHit {
+  _index: string;
+  _id: string;
+  _score?: number | null;
+  _source?: Record<string, unknown>;
+  [key: string]: unknown;
+}
+
+export interface SearchResponse {
+  took?: number;
+  timed_out?: boolean;
+  hits: {
+    total?: number | { value: number; relation?: 'eq' | 'gte' };
+    hits: SearchHit[];
+  };
+  aggregations?: Record<string, unknown>;
+  [key: string]: unknown;
+}
 

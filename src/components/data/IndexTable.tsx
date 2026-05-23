@@ -12,6 +12,7 @@ import {
 } from '@/services/elasticsearch';
 import { Search, X } from 'lucide-react';
 import type { CatShardRow, FieldUsageStatsResponse, IlmExplainResponse, IndexDetailsResponse, IndexInfo, IndexStats } from '@/types/api';
+import { parseSearchTerms, hasSearchTerms, matchesParsedTermsInText } from '@/utils/search';
 
 const TABLE_ID = 'index-statistics';
 
@@ -62,7 +63,7 @@ const IndexTable = memo<IndexTableProps>(({
   variant = 'plain',
   onOpenIndexDetails
 }) => {
-  const { activeCluster } = useMonitoring();
+  const { activeCluster, isClusterUnreachable } = useMonitoring();
   const isPanel = variant === 'panel';
   const [searchTerm, setSearchTerm] = useState('');
   const [pageSize, setPageSize] = useState(10);
@@ -203,7 +204,7 @@ const IndexTable = memo<IndexTableProps>(({
 
   useEffect(() => {
     const indexName = detailRow?.index;
-    if (!indexName || !activeCluster) {
+    if (!indexName || !activeCluster || isClusterUnreachable) {
       setDetailIndexDetails(null);
       setDetailIlm(null);
       setDetailShards(null);
@@ -230,11 +231,11 @@ const IndexTable = memo<IndexTableProps>(({
     });
 
     return () => controller.abort();
-  }, [detailRow?.index, activeCluster]);
+  }, [detailRow?.index, activeCluster, isClusterUnreachable]);
 
   useEffect(() => {
     const indexName = detailRow?.index;
-    if (!indexName || !activeCluster) {
+    if (!indexName || !activeCluster || isClusterUnreachable) {
       detailPerfPrevRef.current = null;
       setDetailPerfMetrics(null);
       setDetailPerfError(null);
@@ -313,7 +314,7 @@ const IndexTable = memo<IndexTableProps>(({
       window.clearInterval(intervalId);
       detailPerfPrevRef.current = null;
     };
-  }, [detailRow, activeCluster]);
+  }, [detailRow, activeCluster, isClusterUnreachable]);
 
   // Use actual elapsed time between snapshots (fetchedAt) when available; else fallback to poll interval
   const timeIntervalSec = useMemo(() => {
@@ -418,14 +419,9 @@ const IndexTable = memo<IndexTableProps>(({
 
   // Filter data based on search term
   const filteredData = useMemo(() => {
-    if (!searchTerm.trim()) {
-      return processedData;
-    }
-    
-    const term = searchTerm.toLowerCase();
-    return processedData.filter(index => 
-      index.index.toLowerCase().includes(term)
-    );
+    const parsed = parseSearchTerms(searchTerm);
+    if (!hasSearchTerms(parsed)) return processedData;
+    return processedData.filter((index) => matchesParsedTermsInText(index.index, parsed));
   }, [processedData, searchTerm]);
 
   const sortedData = useMemo(() => {

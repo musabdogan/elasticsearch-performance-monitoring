@@ -7,6 +7,7 @@ import { getCatShardsPlacement, getIndicesCatalog, getNetworkErrorMessage, getNo
 import Pagination from '@/components/data/Pagination';
 import { InfoPopup } from '@/components/ui/InfoPopup';
 import { formatAlertValue, formatDocumentCount, formatNumber } from '@/utils/format';
+import { hasSearchTerms, matchesParsedTermsInText, parseSearchTerms } from '@/utils/search';
 
 const PAGE_SIZES = [
   { label: 'Top 10', value: 10 },
@@ -70,6 +71,97 @@ function rateKeyForRow(row: CatShardRow): string {
   return `${row.index}#${row.shard}#${role}`;
 }
 
+function placementKey(row: CatShardRow): string {
+  return rateKeyForRow(row);
+}
+
+type RelocationInfo = {
+  sourceNode: string;
+  targetNode: string;
+};
+
+function parseCatByteSizeToBytes(value: string | undefined): number {
+  if (!value) return 0;
+  const raw = String(value).trim().toLowerCase();
+  if (!raw) return 0;
+  const m = raw.match(/^([\d.]+)\s*([kmgtp]?b)?$/i);
+  if (!m) return 0;
+  const num = Number(m[1]);
+  if (!Number.isFinite(num)) return 0;
+  const unit = (m[2] ?? 'b').toLowerCase();
+  const pow = unit === 'kb' ? 1 : unit === 'mb' ? 2 : unit === 'gb' ? 3 : unit === 'tb' ? 4 : unit === 'pb' ? 5 : 0;
+  return num * Math.pow(1024, pow);
+}
+
+function buildRelocationMap(rows: CatShardRow[]): Map<string, RelocationInfo> {
+  const grouped = new Map<string, CatShardRow[]>();
+  for (const r of rows) {
+    const k = placementKey(r);
+    const arr = grouped.get(k) ?? [];
+    arr.push(r);
+    grouped.set(k, arr);
+  }
+
+  const map = new Map<string, RelocationInfo>();
+  for (const arr of grouped.values()) {
+    const relocating = arr.find((r) => String(r.state ?? '').toUpperCase() === 'RELOCATING');
+    const initializing = arr.find((r) => String(r.state ?? '').toUpperCase() === 'INITIALIZING');
+    if (!relocating?.node || !initializing?.node) continue;
+    const sourceNode = normalizeNodeKey(relocating.node);
+    const targetNode = normalizeNodeKey(initializing.node);
+    if (sourceNode === targetNode || sourceNode === 'unassigned' || targetNode === 'unassigned') continue;
+    map.set(placementKey(relocating), { sourceNode, targetNode });
+  }
+  return map;
+}
+
+function isRelocationTargetRow(row: CatShardRow, relocationMap: Map<string, RelocationInfo>): boolean {
+  if (String(row.state ?? '').toUpperCase() !== 'INITIALIZING') return false;
+  const info = relocationMap.get(placementKey(row));
+  if (!info) return false;
+  return normalizeNodeKey(row.node) === info.targetNode;
+}
+
+function computeStoreBytesByIndex(rows: CatShardRow[], relocationMap: Map<string, RelocationInfo>): Map<string, number> {
+  const totals = new Map<string, number>();
+  for (const r of rows) {
+    const state = String(r.state ?? '').toUpperCase();
+    if (state === 'UNASSIGNED') continue;
+    if (isRelocationTargetRow(r, relocationMap)) continue;
+    const bytes = parseCatByteSizeToBytes(r.store);
+    if (bytes <= 0) continue;
+    totals.set(r.index, (totals.get(r.index) ?? 0) + bytes);
+  }
+  return totals;
+}
+
+function sortIndicesByStore(indices: string[], rows: CatShardRow[], relocationMap: Map<string, RelocationInfo>): string[] {
+  const storeByIndex = computeStoreBytesByIndex(rows, relocationMap);
+  return [...indices].sort((a, b) => {
+    const sa = storeByIndex.get(a) ?? 0;
+    const sb = storeByIndex.get(b) ?? 0;
+    if (sb !== sa) return sb - sa;
+    return naturalCompare(a, b);
+  });
+}
+
+function compareIndexLoad(
+  a: string,
+  b: string,
+  totalsByIndexRate: Map<string, number>,
+  totalsByIndexCounter: Map<string, number>,
+  useCounterFallback: boolean
+): number {
+  const ra = totalsByIndexRate.get(a) ?? 0;
+  const rb = totalsByIndexRate.get(b) ?? 0;
+  const ca = totalsByIndexCounter.get(a) ?? 0;
+  const cb = totalsByIndexCounter.get(b) ?? 0;
+  if (!useCounterFallback && rb !== ra) return rb - ra;
+  if (useCounterFallback && cb !== ca) return cb - ca;
+  if (cb !== ca) return cb - ca;
+  return naturalCompare(a, b);
+}
+
 function safeParseInt(v: unknown): number {
   const n = typeof v === 'number' ? v : parseInt(String(v ?? ''), 10);
   return Number.isFinite(n) ? n : 0;
@@ -118,12 +210,14 @@ function renderRateValue(v: number): string {
 
 export function ShardsTabContent({
   onRefreshStateChange,
-  onOpenIndexDetails
+  onOpenIndexDetails,
+  onOpenNodeDetails
 }: {
   onRefreshStateChange?: (loading: boolean) => void;
   onOpenIndexDetails?: (indexName: string) => void;
+  onOpenNodeDetails?: (nodeName: string) => void;
 } = {}) {
-  const { activeCluster } = useMonitoring();
+  const { activeCluster, isClusterUnreachable } = useMonitoring();
 
   const [, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -145,7 +239,9 @@ export function ShardsTabContent({
   const [selectedShard, setSelectedShard] = useState<{
     row: CatShardRow;
     rates: ShardRates | null;
+    relocation: RelocationInfo | null;
   } | null>(null);
+  const shardModalBackdropMouseDownRef = useRef(false);
 
   const prevCountersRef = useRef<Map<string, ShardCounters>>(new Map());
   const prevFetchedAtRef = useRef<number | null>(null);
@@ -156,12 +252,14 @@ export function ShardsTabContent({
     rowsRef.current = rows;
   }, [rows]);
 
+  const relocationMap = useMemo(() => buildRelocationMap(rows), [rows]);
+
   const indicesAll = useMemo(() => {
     const set = new Set<string>();
     for (const r of rows) set.add(r.index);
     const arr = Array.from(set);
-    const t = term.trim().toLowerCase();
-    const filtered = t ? arr.filter((i) => i.toLowerCase().includes(t)) : arr;
+    const parsed = parseSearchTerms(term);
+    const filtered = hasSearchTerms(parsed) ? arr.filter((i) => matchesParsedTermsInText(i, parsed)) : arr;
     const order = indexOrderRef.current;
     if (order && order.length > 0) {
       const pos = new Map<string, number>();
@@ -175,8 +273,8 @@ export function ShardsTabContent({
         return naturalCompare(a, b);
       });
     }
-    return filtered.sort((a, b) => naturalCompare(a, b));
-  }, [rows, term, indexOrderVersion]);
+    return sortIndicesByStore(filtered, rows, relocationMap);
+  }, [rows, term, indexOrderVersion, relocationMap]);
 
   const totalPages = Math.max(1, Math.ceil(indicesAll.length / pageSize));
   const pageSafe = Math.min(page, totalPages);
@@ -229,6 +327,7 @@ export function ShardsTabContent({
     const m = new Map<string, CatShardRow[]>();
     for (const r of rows) {
       if (!indicesPage.includes(r.index)) continue;
+      if (isRelocationTargetRow(r, relocationMap)) continue;
       const nodeKey = normalizeNodeKey(r.node);
       const key = `${nodeKey}#${r.index}`;
       const arr = m.get(key);
@@ -241,10 +340,10 @@ export function ShardsTabContent({
       m.set(k, arr);
     }
     return m;
-  }, [rows, indicesPage]);
+  }, [rows, indicesPage, relocationMap]);
 
   const fetchShardStatsAll = useCallback(async (signal?: AbortSignal | null) => {
-    if (!activeCluster) return;
+    if (!activeCluster || isClusterUnreachable) return;
     try {
       const now = Date.now();
       const prevAt = prevFetchedAtRef.current;
@@ -341,14 +440,20 @@ export function ShardsTabContent({
       for (const [k, rates] of nextRates.entries()) {
         const indexName = k.split('#')[0] ?? '';
         if (!indexName) continue;
-        totalsByIndexRate.set(indexName, (totalsByIndexRate.get(indexName) ?? 0) + (rates.indexingRate ?? 0));
+        totalsByIndexRate.set(
+          indexName,
+          (totalsByIndexRate.get(indexName) ?? 0) + (rates.indexingRate ?? 0) + (rates.searchRate ?? 0)
+        );
       }
 
       const totalsByIndexCounter = new Map<string, number>();
       for (const [k, counters] of nextCounters.entries()) {
         const indexName = k.split('#')[0] ?? '';
         if (!indexName) continue;
-        totalsByIndexCounter.set(indexName, (totalsByIndexCounter.get(indexName) ?? 0) + (counters.indexingOps ?? 0));
+        totalsByIndexCounter.set(
+          indexName,
+          (totalsByIndexCounter.get(indexName) ?? 0) + (counters.indexingOps ?? 0) + (counters.searchOps ?? 0)
+        );
       }
 
       const indicesSet = new Set<string>();
@@ -363,32 +468,15 @@ export function ShardsTabContent({
       // otherwise everything is 0 and we'd accidentally lock alphabetical order.
       const useCounterFallback = maxRate <= 0 && maxCounter > 0;
       if ((!existing || existing.length === 0) && dtSeconds >= 1 && (maxRate > 0 || maxCounter > 0)) {
-        indexOrderRef.current = indicesList.sort((a, b) => {
-          const ra = totalsByIndexRate.get(a) ?? 0;
-          const rb = totalsByIndexRate.get(b) ?? 0;
-          const ca = totalsByIndexCounter.get(a) ?? 0;
-          const cb = totalsByIndexCounter.get(b) ?? 0;
-          if (!useCounterFallback && rb !== ra) return rb - ra;
-          if (useCounterFallback && cb !== ca) return cb - ca;
-          // tie-breaker: use counters, then natural name
-          if (cb !== ca) return cb - ca;
-          return naturalCompare(a, b);
-        });
+        indexOrderRef.current = indicesList.sort((a, b) =>
+          compareIndexLoad(a, b, totalsByIndexRate, totalsByIndexCounter, useCounterFallback)
+        );
         setIndexOrderVersion((v) => v + 1);
       } else {
         const seen = new Set(existing ?? []);
         const missing = indicesList.filter((i) => !seen.has(i));
         if (missing.length > 0) {
-          missing.sort((a, b) => {
-            const ra = totalsByIndexRate.get(a) ?? 0;
-            const rb = totalsByIndexRate.get(b) ?? 0;
-            const ca = totalsByIndexCounter.get(a) ?? 0;
-            const cb = totalsByIndexCounter.get(b) ?? 0;
-            if (!useCounterFallback && rb !== ra) return rb - ra;
-            if (useCounterFallback && cb !== ca) return cb - ca;
-            if (cb !== ca) return cb - ca;
-            return naturalCompare(a, b);
-          });
+          missing.sort((a, b) => compareIndexLoad(a, b, totalsByIndexRate, totalsByIndexCounter, useCounterFallback));
           indexOrderRef.current = (existing ?? []).concat(missing);
           setIndexOrderVersion((v) => v + 1);
         }
@@ -398,10 +486,10 @@ export function ShardsTabContent({
       // Ignore stats errors; placement view still works
       void e;
     }
-  }, [activeCluster]);
+  }, [activeCluster, isClusterUnreachable]);
 
   const fetchAll = useCallback(async (signal?: AbortSignal | null, opts?: { resetFrozenIndexOrder?: boolean }) => {
-    if (!activeCluster) return;
+    if (!activeCluster || isClusterUnreachable) return;
     setLoading(true);
     onRefreshStateChange?.(true);
     setError(null);
@@ -412,7 +500,7 @@ export function ShardsTabContent({
         getIndicesCatalog(activeCluster, signal).catch(() => [])
       ]);
 
-      setRows(Array.isArray(shards) ? shards : []);
+      const shardRows = Array.isArray(shards) ? shards : [];
       // Keep index ordering stable during auto-refresh; only reset on explicit manual refresh.
       if (opts?.resetFrozenIndexOrder) {
         indexOrderRef.current = null;
@@ -422,6 +510,15 @@ export function ShardsTabContent({
         prevCountersRef.current = new Map();
         latestRatesByShardKeyRef.current = new Map();
         setStatsWarm(false);
+      }
+
+      setRows(shardRows);
+      // Seed column order by store size until stats warm enough to rank by combined load.
+      if (shardRows.length > 0 && !indexOrderRef.current) {
+        const relocMap = buildRelocationMap(shardRows);
+        const names = Array.from(new Set(shardRows.map((r) => r.index)));
+        indexOrderRef.current = sortIndicesByStore(names, shardRows, relocMap);
+        setIndexOrderVersion((v) => v + 1);
       }
 
       const healthMap: Record<string, string> = {};
@@ -445,15 +542,15 @@ export function ShardsTabContent({
       setLoading(false);
       onRefreshStateChange?.(false);
     }
-  }, [activeCluster, onRefreshStateChange]);
+  }, [activeCluster, isClusterUnreachable, onRefreshStateChange]);
 
   // Initial fetch on mount/cluster change
   useEffect(() => {
-    if (!activeCluster) return;
+    if (!activeCluster || isClusterUnreachable) return;
     const controller = new AbortController();
     void fetchAll(controller.signal, { resetFrozenIndexOrder: true });
     return () => controller.abort();
-  }, [activeCluster?.baseUrl, activeCluster?.label, fetchAll]);
+  }, [activeCluster?.baseUrl, activeCluster?.label, fetchAll, isClusterUnreachable]);
 
   // Tab-specific refresh event
   useEffect(() => {
@@ -467,7 +564,7 @@ export function ShardsTabContent({
 
   // Placement + index health auto-refresh (10s). Keep frozen index order.
   useEffect(() => {
-    if (!activeCluster) return;
+    if (!activeCluster || isClusterUnreachable) return;
     let controller: AbortController | null = null;
     let inFlight = false;
 
@@ -493,11 +590,11 @@ export function ShardsTabContent({
       controller?.abort();
       window.clearInterval(id);
     };
-  }, [activeCluster?.baseUrl, activeCluster?.label, fetchAll]);
+  }, [activeCluster?.baseUrl, activeCluster?.label, fetchAll, isClusterUnreachable]);
 
   // Shard load auto-refresh (Indexing&Search style): every 10s
   useEffect(() => {
-    if (!activeCluster) return;
+    if (!activeCluster || isClusterUnreachable) return;
     let controller: AbortController | null = null;
     let inFlight = false;
 
@@ -522,7 +619,7 @@ export function ShardsTabContent({
       controller?.abort();
       window.clearInterval(id);
     };
-  }, [activeCluster?.baseUrl, activeCluster?.label, fetchShardStatsAll]);
+  }, [activeCluster?.baseUrl, activeCluster?.label, fetchShardStatsAll, isClusterUnreachable]);
 
   // Reset page when term/page size changes
   useEffect(() => {
@@ -577,7 +674,8 @@ export function ShardsTabContent({
             <p className="mt-2">
               Sorting behavior:
               nodes are natural-sorted (<code className="px-1 rounded bg-gray-100 dark:bg-gray-800">d2</code> before <code className="px-1 rounded bg-gray-100 dark:bg-gray-800">d10</code>),
-              and indices are ranked by highest combined load on the first computed stats window and kept stable until the next manual refresh.
+              indices start by total store size and switch to combined indexing + search load after the first stats window, then stay stable until manual refresh.
+              Relocating shards appear only on the source node with a violet badge showing the target node.
             </p>
           </InfoPopup>
           {!statsWarm && (
@@ -695,9 +793,21 @@ export function ShardsTabContent({
                     className="sticky left-0 z-10 bg-white dark:bg-gray-800 border-b border-gray-100 dark:border-gray-700 px-3 py-2"
                     title={nodeKey}
                   >
-                    <div className="text-xs font-medium text-gray-900 dark:text-gray-100 truncate">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (nodeKey !== 'unassigned') onOpenNodeDetails?.(nodeKey);
+                      }}
+                      disabled={nodeKey === 'unassigned'}
+                      className={`text-xs font-medium truncate ${
+                        nodeKey === 'unassigned'
+                          ? 'text-gray-900 dark:text-gray-100 cursor-default'
+                          : 'text-blue-600 hover:underline dark:text-blue-400'
+                      }`}
+                      title={nodeKey === 'unassigned' ? 'No node assigned' : `Open node details for ${nodeKey}`}
+                    >
                       {nodeKey}
-                    </div>
+                    </button>
                     <div className="mt-0.5 text-[10px] text-gray-500 dark:text-gray-400">
                       {nodeKey === 'unassigned' ? (
                         'No node assigned'
@@ -732,33 +842,46 @@ export function ShardsTabContent({
                               const rk = rateKeyForRow(r);
                               const rates = latestRatesByShardKeyRef.current.get(rk);
                               const rate = Math.max(rates?.indexingRate ?? 0, rates?.searchRate ?? 0);
-                              const badgeBase =
-                                r.prirep === 'p'
+                              const reloc = relocationMap.get(placementKey(r));
+                              const isRelocating =
+                                String(r.state ?? '').toUpperCase() === 'RELOCATING' && reloc != null;
+
+                              const badgeBase = isRelocating
+                                ? 'border border-violet-500/80 bg-violet-100 text-violet-900 dark:border-violet-400/60 dark:bg-violet-900/45 dark:text-violet-100'
+                                : r.prirep === 'p'
                                   ? 'border border-emerald-400/80 dark:border-emerald-500/60'
                                   : 'border border-dashed border-emerald-400/60 dark:border-emerald-500/40';
 
                               const state =
-                                r.state === 'STARTED'
-                                  ? 'ring-0'
-                                  : r.state === 'RELOCATING' || r.state === 'INITIALIZING'
-                                    ? 'ring-1 ring-amber-400/60'
-                                    : r.state === 'UNASSIGNED'
-                                      ? 'ring-1 ring-red-400/70'
-                                      : 'ring-0';
+                                isRelocating
+                                  ? 'ring-1 ring-violet-400/70'
+                                  : r.state === 'STARTED'
+                                    ? 'ring-0'
+                                    : r.state === 'INITIALIZING'
+                                      ? 'ring-1 ring-amber-400/60'
+                                      : r.state === 'UNASSIGNED'
+                                        ? 'ring-1 ring-red-400/70'
+                                        : 'ring-0';
 
                               const roleLabel = r.prirep === 'p' ? 'p' : 'r';
                               const label = `${roleLabel}${r.shard}`;
-                              const cls = `${badgeBase} ${state} ${intensityClass(rate)} px-1.5 py-0.5 rounded text-[10px] font-mono cursor-pointer transition-colors`;
+                              const cls = `${badgeBase} ${state} ${isRelocating ? '' : intensityClass(rate)} px-1.5 py-0.5 rounded text-[10px] font-mono cursor-pointer transition-colors`;
+                              const title = isRelocating
+                                ? `${r.index} shard ${r.shard} (${r.prirep}) — relocating ${reloc.sourceNode} → ${reloc.targetNode}`
+                                : `${r.index} shard ${r.shard} (${r.prirep})`;
 
                               return (
                                 <button
                                   key={k}
                                   type="button"
                                   className={cls}
-                                  onClick={() => setSelectedShard({ row: r, rates: rates ?? null })}
-                                  title={`${r.index} shard ${r.shard} (${r.prirep})`}
+                                  onClick={() => setSelectedShard({ row: r, rates: rates ?? null, relocation: reloc ?? null })}
+                                  title={title}
                                 >
-                                  {label}
+                                  <span>{label}</span>
+                                  {isRelocating ? (
+                                    <span className="ml-0.5 text-[9px] font-sans opacity-90">→{reloc.targetNode}</span>
+                                  ) : null}
                                 </button>
                               );
                             })}
@@ -779,8 +902,14 @@ export function ShardsTabContent({
         createPortal(
           <div
             className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-[1px]"
+            onMouseDown={(e) => {
+              shardModalBackdropMouseDownRef.current = e.target === e.currentTarget;
+            }}
             onClick={(e) => {
-              if (e.target === e.currentTarget) closeShardModal();
+              if (e.target === e.currentTarget && shardModalBackdropMouseDownRef.current) {
+                closeShardModal();
+              }
+              shardModalBackdropMouseDownRef.current = false;
             }}
           >
             <div className="w-full max-w-xl mx-4 max-h-[85vh] overflow-hidden rounded-xl border border-gray-200 bg-white shadow-2xl dark:border-gray-700 dark:bg-gray-900">
@@ -791,6 +920,11 @@ export function ShardsTabContent({
                   </div>
                   <div className="text-xs text-gray-600 dark:text-gray-300 mt-0.5">
                     Shard <span className="font-mono">{selectedShard.row.shard}</span> • {selectedShard.row.prirep === 'p' ? 'Primary' : 'Replica'} • {selectedShard.row.state}
+                    {selectedShard.relocation ? (
+                      <span className="ml-1 text-violet-700 dark:text-violet-300">
+                        ({selectedShard.relocation.sourceNode} → {selectedShard.relocation.targetNode})
+                      </span>
+                    ) : null}
                   </div>
                 </div>
                 <button
@@ -805,7 +939,17 @@ export function ShardsTabContent({
 
               <div className="max-h-[calc(85vh-56px)] overflow-y-auto p-4">
                 <div className="flex items-center justify-between gap-2 text-xs text-gray-600 dark:text-gray-300">
-                  <span className="font-mono">{normalizeNodeKey(selectedShard.row.node)}</span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const nodeKey = normalizeNodeKey(selectedShard.row.node);
+                      if (nodeKey !== 'unassigned') onOpenNodeDetails?.(nodeKey);
+                    }}
+                    className="font-mono text-blue-600 hover:underline dark:text-blue-400"
+                    title={selectedShard.row.node ? `Open node details for ${selectedShard.row.node}` : 'No node assigned'}
+                  >
+                    {normalizeNodeKey(selectedShard.row.node)}
+                  </button>
                   <span className="font-mono">{selectedShard.row.ip ?? '—'}</span>
                 </div>
 

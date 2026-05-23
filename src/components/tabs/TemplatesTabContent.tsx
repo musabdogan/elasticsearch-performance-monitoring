@@ -7,6 +7,7 @@ import Pagination from '@/components/data/Pagination';
 import { InfoPopup } from '@/components/ui/InfoPopup';
 import { TabSectionExpandTrigger } from '@/components/ui/TabSectionExpandTrigger';
 import { RefreshCw, ChevronDown, ChevronRight, Copy, Check, X, Search } from 'lucide-react';
+import { hasSearchTerms, matchesParsedTermsInAnyText, parseSearchTerms } from '@/utils/search';
 
 const DEFAULT_PAGE_SIZE = 10;
 
@@ -87,13 +88,14 @@ export type LegacyTemplateRow = {
   mappings?: Record<string, unknown>;
   aliases?: Record<string, unknown>;
 };
+type SortDirection = 'asc' | 'desc' | null;
 
 function legacyToList(data: LegacyTemplateListResponse): LegacyTemplateRow[] {
   return Object.entries(data).map(([name, t]) => ({ name, ...t }));
 }
 
 export function TemplatesTabContent({ onRefreshStateChange }: { onRefreshStateChange?: (loading: boolean) => void } = {}) {
-  const { activeCluster } = useMonitoring();
+  const { activeCluster, isClusterUnreachable } = useMonitoring();
   const activeClusterRef = useRef(activeCluster);
   activeClusterRef.current = activeCluster;
   const clusterKey = activeCluster ? `${activeCluster.label ?? ''}-${activeCluster.baseUrl}` : '';
@@ -114,7 +116,12 @@ export function TemplatesTabContent({ onRefreshStateChange }: { onRefreshStateCh
   const [indexTemplatesPageSize, setIndexTemplatesPageSize] = useState(DEFAULT_PAGE_SIZE);
   const [legacyTemplatesPage, setLegacyTemplatesPage] = useState(1);
   const [legacyTemplatesPageSize, setLegacyTemplatesPageSize] = useState(DEFAULT_PAGE_SIZE);
+  const [indexSortColumn, setIndexSortColumn] = useState<string | null>(null);
+  const [indexSortDirection, setIndexSortDirection] = useState<SortDirection>(null);
+  const [legacySortColumn, setLegacySortColumn] = useState<string | null>(null);
+  const [legacySortDirection, setLegacySortDirection] = useState<SortDirection>(null);
   const [selectedTemplate, setSelectedTemplate] = useState<{ type: 'index' | 'legacy'; name: string; body: unknown } | null>(null);
+  const templateModalBackdropMouseDownRef = useRef(false);
 
   const toggleTemplateSection = useCallback((section: 'index' | 'legacy') => {
     if (section === 'index') {
@@ -136,7 +143,7 @@ export function TemplatesTabContent({ onRefreshStateChange }: { onRefreshStateCh
 
   const fetchTemplates = useCallback(async () => {
     const cluster = activeClusterRef.current;
-    if (!cluster) return;
+    if (!cluster || isClusterUnreachable) return;
     setLoading(true);
     setError(null);
     setForbidden(false);
@@ -195,10 +202,10 @@ export function TemplatesTabContent({ onRefreshStateChange }: { onRefreshStateCh
     } finally {
       setLoading(false);
     }
-  }, [clusterKey]);
+  }, [clusterKey, isClusterUnreachable]);
 
   useEffect(() => {
-    if (clusterKey) {
+    if (clusterKey && !isClusterUnreachable) {
       setError(null);
       setIndexTemplates([]);
       setLegacyTemplates([]);
@@ -217,7 +224,7 @@ export function TemplatesTabContent({ onRefreshStateChange }: { onRefreshStateCh
       setError(null);
       setForbidden(false);
     }
-  }, [clusterKey, fetchTemplates]);
+  }, [clusterKey, fetchTemplates, isClusterUnreachable]);
 
   useEffect(() => {
     setIndexTemplatesPage(1);
@@ -239,7 +246,7 @@ export function TemplatesTabContent({ onRefreshStateChange }: { onRefreshStateCh
     };
     window.addEventListener('refreshTemplates', onRefresh);
     return () => window.removeEventListener('refreshTemplates', onRefresh);
-  }, [activeCluster, fetchTemplates, onRefreshStateChange]);
+  }, [activeCluster, isClusterUnreachable, fetchTemplates, onRefreshStateChange]);
 
   useEffect(() => {
     if (!selectedTemplate) return;
@@ -251,95 +258,70 @@ export function TemplatesTabContent({ onRefreshStateChange }: { onRefreshStateCh
   }, [selectedTemplate]);
 
   const filteredIndexTemplates = useMemo(() => {
-    const q = indexSearchTerm.trim();
-    if (!q) return indexTemplates;
-    const term = q.toLowerCase();
+    const parsed = parseSearchTerms(indexSearchTerm);
+    if (!hasSearchTerms(parsed)) return indexTemplates;
     return indexTemplates.filter((t) => {
-      if ((t.name ?? '').toLowerCase().includes(term)) return true;
-      if ((t.index_template?.index_patterns ?? []).some((p) => String(p).toLowerCase().includes(term))) return true;
       const mappings = (t.index_template?.template as { mappings?: { properties?: Record<string, unknown> } })?.mappings
         ?.properties;
       const paths = getFieldPathsFromMappings(mappings);
-      return paths.some((p) => p.toLowerCase().includes(term));
+      return matchesParsedTermsInAnyText(
+        [
+          t.name ?? '',
+          ...(t.index_template?.index_patterns ?? []).map((p) => String(p)),
+          ...paths
+        ],
+        parsed
+      );
     });
   }, [indexTemplates, indexSearchTerm]);
 
   const filteredLegacyTemplates = useMemo(() => {
-    const q = legacySearchTerm.trim();
-    if (!q) return legacyTemplates;
-    const term = q.toLowerCase();
+    const parsed = parseSearchTerms(legacySearchTerm);
+    if (!hasSearchTerms(parsed)) return legacyTemplates;
     return legacyTemplates.filter((t) => {
-      if ((t.name ?? '').toLowerCase().includes(term)) return true;
-      if ((t.index_patterns ?? []).some((p) => String(p).toLowerCase().includes(term))) return true;
       const paths = getFieldPathsFromMappings(t.mappings?.properties as Record<string, unknown>);
-      return paths.some((p) => p.toLowerCase().includes(term));
+      return matchesParsedTermsInAnyText(
+        [
+          t.name ?? '',
+          ...(t.index_patterns ?? []).map((p) => String(p)),
+          ...paths
+        ],
+        parsed
+      );
     });
   }, [legacyTemplates, legacySearchTerm]);
 
-  const listEmpty = indexTemplates.length === 0 && legacyTemplates.length === 0;
-
-  if (!activeCluster) {
-    return (
-      <div className="rounded-lg border border-gray-300 bg-white p-4 text-center text-sm text-gray-500 dark:bg-gray-800 dark:border-gray-600 dark:text-gray-400">
-        No cluster selected.
-      </div>
-    );
-  }
-
-  if (loading && listEmpty) {
-    return (
-      <div className="flex items-center justify-center rounded-lg border border-gray-300 bg-white p-8 dark:bg-gray-800 dark:border-gray-600">
-        <RefreshCw className="h-6 w-6 animate-spin text-gray-400" />
-      </div>
-    );
-  }
-
-  if (forbidden || (error && listEmpty)) {
-    return (
-      <div className="rounded-lg border border-gray-200 bg-white dark:border-gray-600 dark:bg-gray-800/50 shadow-sm max-h-[85vh] min-h-0 flex flex-col overflow-hidden">
-        <div className="p-4 text-sm text-gray-700 dark:text-gray-300 relative flex flex-col min-h-0 overflow-y-auto">
-          <div className="border border-gray-200 dark:border-gray-600 rounded-lg overflow-hidden">
-            <button
-              type="button"
-              onClick={() => setPermissionHelpOpen((o) => !o)}
-              className="w-full flex items-center gap-2 px-3 py-2.5 text-left text-sm font-medium text-gray-900 dark:text-gray-100 bg-gray-50 dark:bg-gray-700/50 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
-            >
-              {permissionHelpOpen ? <ChevronDown className="h-4 w-4 shrink-0" /> : <ChevronRight className="h-4 w-4 shrink-0" />}
-              Insufficient permissions — Requires <code className="font-mono text-xs">manage_index_templates</code>
-            </button>
-            {permissionHelpOpen && (
-              <div className="px-3 pb-3 pt-1 border-t border-gray-200 dark:border-gray-600 bg-gray-50/50 dark:bg-gray-800/30">
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-2">
-                  <div className="min-w-0">
-                    <p className="text-xs font-medium text-gray-900 dark:text-gray-100 mb-1.5">Description</p>
-                    <p className="text-xs text-gray-600 dark:text-gray-400">
-                      Listing index templates requires <code className="bg-gray-200 dark:bg-gray-600 px-1 rounded font-mono">manage_index_templates</code> cluster privilege.
-                    </p>
-                    <a
-                      href="https://www.elastic.co/docs/reference/elasticsearch/roles"
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-xs text-blue-600 dark:text-blue-400 hover:underline mt-1.5 inline-block"
-                    >
-                      Official Documentation
-                    </a>
-                  </div>
-                  <div className="min-w-0">
-                    <p className="text-xs font-medium text-gray-900 dark:text-gray-100 mb-1.5">Kibana Dev Tools</p>
-                    <CodeBlockWithCopy text={TEMPLATES_KIBANA_SNIPPET} label="Role snippet" />
-                  </div>
-                  <div className="min-w-0">
-                    <p className="text-xs font-medium text-gray-900 dark:text-gray-100 mb-1.5">Terminal (cURL)</p>
-                    <CodeBlockWithCopy text={curlSnippet} label="curl" />
-                  </div>
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
-      </div>
-    );
-  }
+  const sortRows = useCallback(
+    <T extends object>(
+      rows: T[],
+      columns: Array<{ key: keyof T | string; sortFn?: (a: T, b: T) => number }>,
+      sortColumn: string | null,
+      sortDirection: SortDirection
+    ): T[] => {
+      if (!sortColumn || !sortDirection) return rows;
+      const column = columns.find((c) => c.key === sortColumn);
+      if (!column) return rows;
+      return [...rows].sort((a, b) => {
+        if (column.sortFn) {
+          return sortDirection === 'asc' ? column.sortFn(a, b) : column.sortFn(b, a);
+        }
+        const aValue = (a as Record<string, unknown>)[String(column.key)];
+        const bValue = (b as Record<string, unknown>)[String(column.key)];
+        if (aValue == null && bValue == null) return 0;
+        if (aValue == null) return 1;
+        if (bValue == null) return -1;
+        if (typeof aValue === 'number' && typeof bValue === 'number') {
+          return sortDirection === 'asc' ? aValue - bValue : bValue - aValue;
+        }
+        const aStr = String(aValue).toLowerCase();
+        const bStr = String(bValue).toLowerCase();
+        return sortDirection === 'asc'
+          ? (aStr < bStr ? -1 : aStr > bStr ? 1 : 0)
+          : (aStr > bStr ? -1 : aStr < bStr ? 1 : 0);
+      });
+    },
+    []
+  );
 
   const indexTemplateColumns = [
     {
@@ -466,6 +448,95 @@ export function TemplatesTabContent({ onRefreshStateChange }: { onRefreshStateCh
     }
   ];
 
+  const sortedIndexTemplates = useMemo(
+    () => sortRows(filteredIndexTemplates, indexTemplateColumns as any, indexSortColumn, indexSortDirection),
+    [filteredIndexTemplates, indexTemplateColumns, indexSortColumn, indexSortDirection, sortRows]
+  );
+  const paginatedIndexTemplates = useMemo(
+    () => sortedIndexTemplates.slice(
+      (indexTemplatesPage - 1) * indexTemplatesPageSize,
+      indexTemplatesPage * indexTemplatesPageSize
+    ),
+    [sortedIndexTemplates, indexTemplatesPage, indexTemplatesPageSize]
+  );
+
+  const sortedLegacyTemplates = useMemo(
+    () => sortRows(filteredLegacyTemplates, legacyTemplateColumns as any, legacySortColumn, legacySortDirection),
+    [filteredLegacyTemplates, legacyTemplateColumns, legacySortColumn, legacySortDirection, sortRows]
+  );
+  const paginatedLegacyTemplates = useMemo(
+    () => sortedLegacyTemplates.slice(
+      (legacyTemplatesPage - 1) * legacyTemplatesPageSize,
+      legacyTemplatesPage * legacyTemplatesPageSize
+    ),
+    [sortedLegacyTemplates, legacyTemplatesPage, legacyTemplatesPageSize]
+  );
+
+  const listEmpty = indexTemplates.length === 0 && legacyTemplates.length === 0;
+
+  if (!activeCluster) {
+    return (
+      <div className="rounded-lg border border-gray-300 bg-white p-4 text-center text-sm text-gray-500 dark:bg-gray-800 dark:border-gray-600 dark:text-gray-400">
+        No cluster selected.
+      </div>
+    );
+  }
+
+  if (loading && listEmpty) {
+    return (
+      <div className="flex items-center justify-center rounded-lg border border-gray-300 bg-white p-8 dark:bg-gray-800 dark:border-gray-600">
+        <RefreshCw className="h-6 w-6 animate-spin text-gray-400" />
+      </div>
+    );
+  }
+
+  if (forbidden || (error && listEmpty)) {
+    return (
+      <div className="rounded-lg border border-gray-200 bg-white dark:border-gray-600 dark:bg-gray-800/50 shadow-sm max-h-[85vh] min-h-0 flex flex-col overflow-hidden">
+        <div className="p-4 text-sm text-gray-700 dark:text-gray-300 relative flex flex-col min-h-0 overflow-y-auto">
+          <div className="border border-gray-200 dark:border-gray-600 rounded-lg overflow-hidden">
+            <button
+              type="button"
+              onClick={() => setPermissionHelpOpen((o) => !o)}
+              className="w-full flex items-center gap-2 px-3 py-2.5 text-left text-sm font-medium text-gray-900 dark:text-gray-100 bg-gray-50 dark:bg-gray-700/50 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+            >
+              {permissionHelpOpen ? <ChevronDown className="h-4 w-4 shrink-0" /> : <ChevronRight className="h-4 w-4 shrink-0" />}
+              Insufficient permissions — Requires <code className="font-mono text-xs">manage_index_templates</code>
+            </button>
+            {permissionHelpOpen && (
+              <div className="px-3 pb-3 pt-1 border-t border-gray-200 dark:border-gray-600 bg-gray-50/50 dark:bg-gray-800/30">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-2">
+                  <div className="min-w-0">
+                    <p className="text-xs font-medium text-gray-900 dark:text-gray-100 mb-1.5">Description</p>
+                    <p className="text-xs text-gray-600 dark:text-gray-400">
+                      Listing index templates requires <code className="bg-gray-200 dark:bg-gray-600 px-1 rounded font-mono">manage_index_templates</code> cluster privilege.
+                    </p>
+                    <a
+                      href="https://www.elastic.co/docs/reference/elasticsearch/roles"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-xs text-blue-600 dark:text-blue-400 hover:underline mt-1.5 inline-block"
+                    >
+                      Official Documentation
+                    </a>
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-xs font-medium text-gray-900 dark:text-gray-100 mb-1.5">Kibana Dev Tools</p>
+                    <CodeBlockWithCopy text={TEMPLATES_KIBANA_SNIPPET} label="Role snippet" />
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-xs font-medium text-gray-900 dark:text-gray-100 mb-1.5">Terminal (cURL)</p>
+                    <CodeBlockWithCopy text={curlSnippet} label="curl" />
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="flex flex-col gap-4">
       {error && (indexTemplates.length > 0 || legacyTemplates.length > 0) && (
@@ -522,8 +593,8 @@ export function TemplatesTabContent({ onRefreshStateChange }: { onRefreshStateCh
               </div>
               <Pagination
                 currentPage={indexTemplatesPage}
-                totalPages={Math.max(1, Math.ceil(filteredIndexTemplates.length / Math.max(1, indexTemplatesPageSize)))}
-                totalItems={filteredIndexTemplates.length}
+                totalPages={Math.max(1, Math.ceil(sortedIndexTemplates.length / Math.max(1, indexTemplatesPageSize)))}
+                totalItems={sortedIndexTemplates.length}
                 pageSize={indexTemplatesPageSize}
                 onPageChange={setIndexTemplatesPage}
                 inline
@@ -547,14 +618,20 @@ export function TemplatesTabContent({ onRefreshStateChange }: { onRefreshStateCh
           <div className="tab-section-body">
             <div className="tab-section-scroll tab-section-scroll-flush">
               <DataTable
-                data={filteredIndexTemplates.slice(
-                  (indexTemplatesPage - 1) * indexTemplatesPageSize,
-                  indexTemplatesPage * indexTemplatesPageSize
-                )}
+                data={paginatedIndexTemplates}
                 columns={indexTemplateColumns}
                 emptyMessage="No index templates. Add a cluster and refresh, or create templates in Kibana/API."
                 tableId="templates-index"
                 dense
+                controlledSort={{
+                  sortColumn: indexSortColumn,
+                  sortDirection: indexSortDirection,
+                  onSortChange: (column, direction) => {
+                    setIndexSortColumn(column);
+                    setIndexSortDirection(direction);
+                    setIndexTemplatesPage(1);
+                  }
+                }}
               />
             </div>
           </div>
@@ -609,8 +686,8 @@ export function TemplatesTabContent({ onRefreshStateChange }: { onRefreshStateCh
               </div>
               <Pagination
                 currentPage={legacyTemplatesPage}
-                totalPages={Math.max(1, Math.ceil(filteredLegacyTemplates.length / Math.max(1, legacyTemplatesPageSize)))}
-                totalItems={filteredLegacyTemplates.length}
+                totalPages={Math.max(1, Math.ceil(sortedLegacyTemplates.length / Math.max(1, legacyTemplatesPageSize)))}
+                totalItems={sortedLegacyTemplates.length}
                 pageSize={legacyTemplatesPageSize}
                 onPageChange={setLegacyTemplatesPage}
                 inline
@@ -634,14 +711,20 @@ export function TemplatesTabContent({ onRefreshStateChange }: { onRefreshStateCh
           <div className="tab-section-body">
             <div className="tab-section-scroll tab-section-scroll-flush">
               <DataTable
-                data={filteredLegacyTemplates.slice(
-                  (legacyTemplatesPage - 1) * legacyTemplatesPageSize,
-                  legacyTemplatesPage * legacyTemplatesPageSize
-                )}
+                data={paginatedLegacyTemplates}
                 columns={legacyTemplateColumns}
                 emptyMessage="No legacy templates. Add a cluster and refresh, or create templates via API."
                 tableId="templates-legacy"
                 dense
+                controlledSort={{
+                  sortColumn: legacySortColumn,
+                  sortDirection: legacySortDirection,
+                  onSortChange: (column, direction) => {
+                    setLegacySortColumn(column);
+                    setLegacySortDirection(direction);
+                    setLegacyTemplatesPage(1);
+                  }
+                }}
               />
             </div>
           </div>
@@ -651,7 +734,15 @@ export function TemplatesTabContent({ onRefreshStateChange }: { onRefreshStateCh
       {selectedTemplate && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
-          onClick={() => setSelectedTemplate(null)}
+          onMouseDown={(e) => {
+            templateModalBackdropMouseDownRef.current = e.target === e.currentTarget;
+          }}
+          onClick={(e) => {
+            if (e.target === e.currentTarget && templateModalBackdropMouseDownRef.current) {
+              setSelectedTemplate(null);
+            }
+            templateModalBackdropMouseDownRef.current = false;
+          }}
           role="dialog"
           aria-modal="true"
           aria-labelledby="template-modal-title"
