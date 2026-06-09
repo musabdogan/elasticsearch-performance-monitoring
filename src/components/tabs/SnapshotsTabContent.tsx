@@ -57,6 +57,7 @@ function CodeBlockWithCopy({ text, label }: { text: string; label: string }) {
 
 const TABLE_ID = 'snapshots';
 const SNAPSHOT_DETAIL_POLL_MS = 10_000;
+const SNAPSHOT_DETAIL_SLOW_HINT_DELAY_MS = 2_000;
 
 type SortDirection = 'asc' | 'desc' | null;
 type SnapshotSortKey = keyof CatSnapshotRow;
@@ -438,6 +439,7 @@ export function SnapshotsTabContent(
   const [snapshotDetailOpen, setSnapshotDetailOpen] = useState(false);
   const [snapshotDetailTarget, setSnapshotDetailTarget] = useState<{ repository: string; snapshot: string } | null>(null);
   const [snapshotDetailLoading, setSnapshotDetailLoading] = useState(false);
+  const [snapshotDetailShowSlowHint, setSnapshotDetailShowSlowHint] = useState(false);
   const [snapshotDetailError, setSnapshotDetailError] = useState<string | null>(null);
   const [snapshotDetail, setSnapshotDetail] = useState<SnapshotStatusEntry | null>(null);
   const snapshotDetailBackdropMouseDownRef = useRef(false);
@@ -532,9 +534,21 @@ export function SnapshotsTabContent(
   const closeSnapshotDetail = useCallback(() => {
     setSnapshotDetailOpen(false);
     snapshotDetailRequestKeyRef.current = null;
+    setSnapshotDetailShowSlowHint(false);
     setSnapshotGlobalStateInfoOpen(false);
     setSnapshotIndexSearchTerm('');
   }, []);
+
+  useEffect(() => {
+    if (!snapshotDetailOpen || !snapshotDetailLoading) {
+      setSnapshotDetailShowSlowHint(false);
+      return;
+    }
+    const timerId = window.setTimeout(() => {
+      setSnapshotDetailShowSlowHint(true);
+    }, SNAPSHOT_DETAIL_SLOW_HINT_DELAY_MS);
+    return () => window.clearTimeout(timerId);
+  }, [snapshotDetailOpen, snapshotDetailLoading]);
 
   // Auto-refresh: while snapshot detail popup is open, re-fetch status every 10s.
   useEffect(() => {
@@ -1337,8 +1351,15 @@ export function SnapshotsTabContent(
                     );
                   })()}
                 {snapshotDetailLoading && (
-                  <div className="flex items-center justify-center rounded-lg border border-gray-200 bg-gray-50 p-6 dark:border-gray-700 dark:bg-gray-900/30">
-                    <RefreshCw className="h-5 w-5 animate-spin text-gray-400" />
+                  <div className="rounded-lg border border-gray-200 bg-gray-50 p-6 dark:border-gray-700 dark:bg-gray-900/30">
+                    <div className="flex flex-col items-center justify-center gap-2">
+                      <RefreshCw className="h-5 w-5 animate-spin text-gray-400" />
+                      {snapshotDetailShowSlowHint && (
+                        <p className="text-xs text-gray-500 dark:text-gray-400">
+                          Loading snapshot details... It can take up to 30 seconds.
+                        </p>
+                      )}
+                    </div>
                   </div>
                 )}
                 {!snapshotDetailLoading && snapshotDetailError && (

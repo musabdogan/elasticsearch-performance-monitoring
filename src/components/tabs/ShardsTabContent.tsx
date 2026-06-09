@@ -533,6 +533,10 @@ export function ShardsTabContent({
 
       // Shard load is fetched in a debounced effect based on visible columns (indicesPage)
     } catch (e) {
+      if (e instanceof Error && (e.name === 'AbortError' || e.message.toLowerCase().includes('aborted'))) {
+        // Expected during request handoff (initial load / polling); do not surface as user-facing error.
+        return;
+      }
       const msg = e instanceof Error ? e.message : 'Failed to load shards';
       const isTimeoutOrNetwork = msg.toLowerCase().includes('network') || msg.toLowerCase().includes('timed out');
       setError(isTimeoutOrNetwork ? getNetworkErrorMessage(activeCluster.baseUrl) : msg);

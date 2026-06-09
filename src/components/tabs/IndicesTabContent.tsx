@@ -310,9 +310,11 @@ function parseFieldUsageIndexDetailed(
   fieldUsageResponse: FieldUsageStatsResponse | null,
   mappingsResponse: MappingsResponse | null
 ): FieldUsageSummary {
+  const mappingProps = mappingsResponse?.[indexName]?.mappings?.properties;
+  const mappingLeafFieldNames = mappingProps ? getLeafFieldNamesFromMapping(mappingProps) : [];
   const totalFieldsFromMapping =
-    mappingsResponse?.[indexName]?.mappings?.properties != null
-      ? countLeafFieldsFromMapping(mappingsResponse[indexName].mappings!.properties)
+    mappingProps != null
+      ? countLeafFieldsFromMapping(mappingProps)
       : 0;
 
   const indexData = fieldUsageResponse?.[indexName] as { shards?: unknown[] } | undefined;
@@ -350,11 +352,13 @@ function parseFieldUsageIndexDetailed(
     }
   }
 
-  const userFieldNamesForTotal = [...allFieldNames].filter((name) => !name.startsWith('_'));
-  const totalFields = totalFieldsFromMapping > 0 ? totalFieldsFromMapping : userFieldNamesForTotal.length;
+  const userFieldNamesFromUsage = [...allFieldNames].filter((name) => !name.startsWith('_'));
+  const totalFields = totalFieldsFromMapping > 0 ? totalFieldsFromMapping : userFieldNamesFromUsage.length;
+  const listFieldNames = mappingLeafFieldNames.length > 0
+    ? mappingLeafFieldNames.filter((name) => !name.startsWith('_'))
+    : userFieldNamesFromUsage;
   const fieldList: Array<{ name: string; usage: number; usageTypes: string[] }> = [];
-  for (const fn of allFieldNames) {
-    if (fn.startsWith('_')) continue;
+  for (const fn of listFieldNames) {
     const usage = fieldUsageMax[fn] ?? 0;
     const usageTypes = Array.from(fieldUsageTypesMap[fn] ?? []);
     fieldList.push({ name: fn, usage, usageTypes });
@@ -362,10 +366,8 @@ function parseFieldUsageIndexDetailed(
   fieldList.sort((a, b) => b.usage - a.usage || a.name.localeCompare(b.name));
 
   let unusedFieldNames: string[] | undefined;
-  const mappingProps = mappingsResponse?.[indexName]?.mappings?.properties;
   if (mappingProps) {
-    const leafNames = getLeafFieldNamesFromMapping(mappingProps);
-    unusedFieldNames = leafNames
+    unusedFieldNames = mappingLeafFieldNames
       .filter((name) => !name.startsWith('_') && (fieldUsageMax[name] ?? 0) === 0)
       .sort((a, b) => a.localeCompare(b));
   } else {
@@ -403,6 +405,7 @@ function FieldsPopoverContent({
   indexName,
   summary,
   fieldList,
+  mode,
   usageTypeInfoOpen,
   setUsageTypeInfoOpen,
   onClose
@@ -410,6 +413,7 @@ function FieldsPopoverContent({
   indexName: string;
   summary: FieldUsageSummary | undefined;
   fieldList: Array<{ name: string; usage: number; usageTypes: string[] }>;
+  mode: 'all' | 'used';
   usageTypeInfoOpen: boolean;
   setUsageTypeInfoOpen: (open: boolean) => void;
   onClose: () => void;
@@ -462,16 +466,22 @@ function FieldsPopoverContent({
                   <>
                     <span>Used: {summary.usedFields}</span>
                     <span>Unsearched: {summary.unusedFields}</span>
-                    {summary.mostUsedFieldName && (
-                      <span>Most used: <span className="font-mono">{summary.mostUsedFieldName}</span></span>
-                    )}
                   </>
                 )}
               </div>
+              {summary.hasUsageData && (
+                <p className="mb-3 text-xs text-gray-500 dark:text-gray-400">
+                  {mode === 'all'
+                    ? 'Total fields come from mappings; this table lists all mapped fields with usage when observed.'
+                    : 'The table below lists fields observed by field usage stats.'}
+                </p>
+              )}
               {!summary.hasUsageData ? (
                 <p className="text-sm text-gray-500 dark:text-gray-400">Usage data not available for this cluster.</p>
               ) : fieldList.length === 0 ? (
-                <p className="text-sm text-gray-500 dark:text-gray-400">No field usage data.</p>
+                <p className="text-sm text-gray-500 dark:text-gray-400">
+                  {mode === 'all' ? 'No mapped fields found.' : 'No used fields observed yet.'}
+                </p>
               ) : (
                 <div className="overflow-x-auto rounded border border-gray-200 dark:border-gray-600">
                   <table className="w-full min-w-[400px] text-left text-sm tab-content-value">
@@ -535,7 +545,7 @@ function FieldsPopoverContent({
               )}
             </>
           ) : (
-            <p className="text-sm text-gray-500 dark:text-gray-400">No field usage data for this index.</p>
+            <p className="text-sm text-gray-500 dark:text-gray-400">No field usage summary available for this index.</p>
           )}
         </div>
       </div>
@@ -1081,6 +1091,7 @@ export function IndicesTabContent({
   const [catalogSortDirection, setCatalogSortDirection] = useState<'asc' | 'desc'>('desc');
   const [aliasesPopoverIndex, setAliasesPopoverIndex] = useState<string | null>(null);
   const [fieldsPopoverIndex, setFieldsPopoverIndex] = useState<string | null>(null);
+  const [fieldsPopoverMode, setFieldsPopoverMode] = useState<'all' | 'used'>('all');
   const [unsearchedFieldsPopoverIndex, setUnsearchedFieldsPopoverIndex] = useState<string | null>(null);
   const [usageTypeInfoOpen, setUsageTypeInfoOpen] = useState(false);
   const [selectedIndex, setSelectedIndex] = useState<string | null>(null);
@@ -1936,12 +1947,16 @@ export function IndicesTabContent({
     const controller = new AbortController();
     const signal = controller.signal;
     try {
-      const [data, shards] = await Promise.all([
+      const [data, shards, catalogRes] = await Promise.all([
         getIlmExplain(activeCluster, '*', signal),
-        getCatShardsPlacement(activeCluster, signal).catch(() => [] as CatShardRow[])
+        getCatShardsPlacement(activeCluster, signal).catch(() => [] as CatShardRow[]),
+        getIndicesCatalog(activeCluster, signal).catch(() => [] as CatIndexRow[])
       ]);
       setIlmAllExplain(data);
       setIlmAllShards(Array.isArray(shards) ? shards : []);
+      if (Array.isArray(catalogRes) && catalogRes.length > 0) {
+        setCatalog(catalogRes);
+      }
     } catch (e) {
       const msg = e instanceof Error ? e.message : '';
       const isTimeoutOrNetwork =
@@ -2102,6 +2117,7 @@ export function IndicesTabContent({
   type IlmAllRow = {
     index: string;
     managed: boolean;
+    ilmStatus: 'Managed' | 'Without ILM';
     policy: string;
     phase: string;
     actionStep: string;
@@ -2122,6 +2138,11 @@ export function IndicesTabContent({
 
   const ilmAllRows = useMemo((): IlmAllRow[] => {
     const indices = ilmAllExplain?.indices ?? {};
+    const catalogIndexNames = (catalog ?? [])
+      .map((r) => (r.index ?? '').trim())
+      .filter(Boolean);
+    const explainIndexNames = Object.keys(indices).filter((name) => name !== '_shards');
+    const allIndexNames = Array.from(new Set([...catalogIndexNames, ...explainIndexNames]));
     const rows: IlmAllRow[] = [];
     const shardAgg: Record<string, {
       sizes: Array<{ bytes: number; text: string }>;
@@ -2151,22 +2172,24 @@ export function IndicesTabContent({
       }
     }
 
-    for (const [indexName, v] of Object.entries(indices)) {
-      if (!v || typeof v !== 'object') continue;
-      const managed = (v as { managed?: boolean }).managed ?? false;
-      const policy = (v as { policy?: string }).policy ?? '—';
-      const phase = (v as { phase?: string }).phase ?? '—';
-      const action = (v as { action?: string }).action ?? '—';
-      const stepRaw = (v as { step?: unknown }).step;
+    for (const indexName of allIndexNames) {
+      const v = indices[indexName];
+      const hasExplain = !!v && typeof v === 'object';
+      const managed = hasExplain ? ((v as { managed?: boolean }).managed ?? false) : false;
+      const ilmStatus: IlmAllRow['ilmStatus'] = managed ? 'Managed' : 'Without ILM';
+      const policy = hasExplain ? ((v as { policy?: string }).policy ?? '—') : '—';
+      const phase = hasExplain ? ((v as { phase?: string }).phase ?? '—') : '—';
+      const action = hasExplain ? ((v as { action?: string }).action ?? '—') : '—';
+      const stepRaw = hasExplain ? (v as { step?: unknown }).step : undefined;
       const step =
         typeof stepRaw === 'string'
           ? stepRaw
           : (stepRaw as { name?: string } | undefined)?.name ?? '—';
-      const actionStep = action === step ? action : `${action} / ${step}`;
+      const actionStep = hasExplain ? (action === step ? action : `${action} / ${step}`) : 'not managed by ILM';
       const alreadyCompleted = action === 'complete' && step === 'complete';
-      const rollover = (v as {
+      const rollover = hasExplain ? (v as {
         phase_execution?: { phase_definition?: { actions?: { rollover?: Record<string, unknown> } } };
-      }).phase_execution?.phase_definition?.actions?.rollover;
+      }).phase_execution?.phase_definition?.actions?.rollover : undefined;
       const rolloverConditions = (() => {
         if (!rollover || typeof rollover !== 'object') return '—';
         const minLines: string[] = [];
@@ -2187,12 +2210,14 @@ export function IndicesTabContent({
         const lines = [...minLines, ...maxLines];
         return lines.length > 0 ? lines.join('\n') : '—';
       })();
-      const ageText = (v as { age?: string }).age ?? '—';
+      const ageText = hasExplain ? ((v as { age?: string }).age ?? '—') : '—';
       const ageMs = parseAgeToMs(ageText);
       const stepMessage =
-        (v as { step_info?: { message?: string; reason?: string } }).step_info?.message ??
-        (v as { step_info?: { message?: string; reason?: string } }).step_info?.reason ??
-        '';
+        hasExplain
+          ? ((v as { step_info?: { message?: string; reason?: string } }).step_info?.message ??
+            (v as { step_info?: { message?: string; reason?: string } }).step_info?.reason ??
+            '')
+          : 'No ILM policy is attached to this index.';
 
       const shards = shardAgg[indexName];
       const sizesSorted = shards?.sizes ? [...shards.sizes].sort((a, b) => b.bytes - a.bytes) : [];
@@ -2323,6 +2348,7 @@ export function IndicesTabContent({
       rows.push({
         index: indexName,
         managed,
+        ilmStatus,
         policy,
         phase,
         actionStep,
@@ -2343,7 +2369,11 @@ export function IndicesTabContent({
       });
     }
     return rows;
-  }, [ilmAllExplain, ilmAllShards]);
+  }, [ilmAllExplain, ilmAllShards, catalog]);
+
+  const ilmWithoutCount = useMemo(() => {
+    return ilmAllRows.reduce((count, row) => count + (row.managed ? 0 : 1), 0);
+  }, [ilmAllRows]);
 
   const filteredIlmAllRows = useMemo(() => {
     const parsed = parseSearchTerms(ilmAllSearchTerm);
@@ -2353,6 +2383,7 @@ export function IndicesTabContent({
       return phaseOk && matchesParsedTermsInAnyText(
         [
           r.index,
+          r.ilmStatus,
           r.policy,
           r.phase,
           r.actionStep,
@@ -2370,6 +2401,7 @@ export function IndicesTabContent({
     switch (col) {
       case 'index':
         return (a: IlmAllRow, b: IlmAllRow) => a.index.localeCompare(b.index);
+      case 'ilm_status':
       case 'managed':
         return (a: IlmAllRow, b: IlmAllRow) => Number(a.managed) - Number(b.managed);
       case 'primary_total':
@@ -2668,11 +2700,9 @@ export function IndicesTabContent({
         case 'field_usage_unused':
           return (a: CatIndexRow, b: CatIndexRow) =>
             (fieldUsageAllMap[a.index ?? '']?.unusedFields ?? 0) - (fieldUsageAllMap[b.index ?? '']?.unusedFields ?? 0);
-        case 'field_usage_most_used':
+        case 'field_usage_used':
           return (a: CatIndexRow, b: CatIndexRow) =>
-            (fieldUsageAllMap[a.index ?? '']?.mostUsedFieldName ?? '').localeCompare(
-              fieldUsageAllMap[b.index ?? '']?.mostUsedFieldName ?? ''
-            );
+            (fieldUsageAllMap[a.index ?? '']?.usedFields ?? 0) - (fieldUsageAllMap[b.index ?? '']?.usedFields ?? 0);
         default:
           return () => 0;
       }
@@ -2742,14 +2772,15 @@ export function IndicesTabContent({
     return () => window.removeEventListener('keydown', onKey);
   }, [unsearchedFieldsPopoverIndex]);
 
-  const handleFieldCountClick = useCallback((indexName: string) => {
+  const handleUsedFieldsClick = useCallback((indexName: string) => {
     if (!indexName) return;
     setUsageTypeInfoOpen(false);
     ensureFieldUsageDetails(indexName);
+    setFieldsPopoverMode('used');
     setFieldsPopoverIndex(indexName);
   }, [ensureFieldUsageDetails]);
 
-  /** Same as field-count path: lite map has no fieldList/unusedFieldNames until detailed parse runs. */
+  /** Same flow: lite map has no fieldList/unusedFieldNames until detailed parse runs. */
   const handleUnsearchedFieldsClick = useCallback((indexName: string) => {
     if (!indexName) return;
     ensureFieldUsageDetails(indexName);
@@ -2841,20 +2872,12 @@ export function IndicesTabContent({
       },
       {
         key: 'field_usage_total',
-        header: 'Field count',
+        header: 'Total fields',
         className: 'tab-content-value',
         render: (row: CatIndexRow) => {
           const s = row.index ? fieldUsageAllMap[row.index] : undefined;
           if (!s || s.totalFields === 0) return '—';
-          return (
-            <button
-              type="button"
-              onClick={() => handleFieldCountClick(row.index ?? '')}
-              className="inline-flex items-center rounded border border-gray-300 bg-gray-50 px-2 py-0.5 text-sm font-medium text-gray-700 hover:bg-gray-100 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200 dark:hover:bg-gray-600 tab-content-value"
-            >
-              {s.totalFields} field{s.totalFields !== 1 ? 's' : ''}
-            </button>
-          );
+          return `${s.totalFields} field${s.totalFields !== 1 ? 's' : ''}`;
         }
       },
       {
@@ -2878,17 +2901,26 @@ export function IndicesTabContent({
         }
       },
       {
-        key: 'field_usage_most_used',
-        header: 'Most used field',
-        className: 'font-mono tab-content-value',
+        key: 'field_usage_used',
+        header: 'Used fields',
+        className: 'tab-content-value',
         render: (row: CatIndexRow) => {
           const s = row.index ? fieldUsageAllMap[row.index] : undefined;
-          if (!s || !s.hasUsageData || !s.mostUsedFieldName) return '—';
-          return s.mostUsedFieldName;
+          if (!s || !s.hasUsageData) return '—';
+          return (
+            <button
+              type="button"
+              onClick={() => row.index && handleUsedFieldsClick(row.index)}
+              className="inline-flex items-center rounded border border-gray-300 bg-gray-50 px-2 py-0.5 text-sm font-medium text-gray-700 hover:bg-gray-100 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200 dark:hover:bg-gray-600 tab-content-value"
+              title="Click to see used fields"
+            >
+              {s.usedFields} field{s.usedFields !== 1 ? 's' : ''}
+            </button>
+          );
         }
       }
     ],
-    [selectedIndex, indexToAliases, fieldUsageAllMap, handleFieldCountClick, handleUnsearchedFieldsClick]
+    [selectedIndex, indexToAliases, fieldUsageAllMap, handleUsedFieldsClick, handleUnsearchedFieldsClick]
   );
 
   const selectedCatalogRow = useMemo(
@@ -3187,15 +3219,24 @@ export function IndicesTabContent({
                   <h4 className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">Field usage</h4>
                   {selectedIndex && fieldUsageAllMap[selectedIndex]?.hasUsageData ? (
                     <div className="space-y-2">
-                      <div><span className="text-gray-500 dark:text-gray-400 block text-xs">Field count</span><div className="font-mono">
+                      <div><span className="text-gray-500 dark:text-gray-400 block text-xs">Total fields</span><div className="font-mono">
                         {fieldUsageAllMap[selectedIndex]?.totalFields != null && fieldUsageAllMap[selectedIndex].totalFields > 0 ? (
+                          <div className="text-sm font-medium text-gray-900 dark:text-gray-100">
+                            {fieldUsageAllMap[selectedIndex].totalFields}
+                          </div>
+                        ) : (
+                          '—'
+                        )}
+                      </div></div>
+                      <div><span className="text-gray-500 dark:text-gray-400 block text-xs">Used fields</span><div className="font-mono">
+                        {fieldUsageAllMap[selectedIndex]?.hasUsageData ? (
                           <button
                             type="button"
-                            onClick={() => selectedIndex && handleFieldCountClick(selectedIndex)}
+                            onClick={() => selectedIndex && handleUsedFieldsClick(selectedIndex)}
                             className="inline-flex items-center rounded border border-gray-300 bg-gray-50 px-2 py-0.5 text-sm font-medium text-gray-700 hover:bg-gray-100 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200 dark:hover:bg-gray-600"
-                            title="Click to see all fields"
+                            title="Click to see used fields"
                           >
-                            {fieldUsageAllMap[selectedIndex].totalFields}
+                            {fieldUsageAllMap[selectedIndex].usedFields} field{fieldUsageAllMap[selectedIndex].usedFields !== 1 ? 's' : ''}
                           </button>
                         ) : (
                           '—'
@@ -3215,7 +3256,6 @@ export function IndicesTabContent({
                           '—'
                         )}
                       </div></div>
-                      <div><span className="text-gray-500 dark:text-gray-400 block text-xs">Most used field</span><div className="font-mono text-gray-900 dark:text-gray-100 break-all truncate" title={fieldUsageAllMap[selectedIndex]?.hasUsageData ? String(fieldUsageAllMap[selectedIndex].mostUsedFieldName ?? '') : ''}>{fieldUsageAllMap[selectedIndex]?.hasUsageData ? (fieldUsageAllMap[selectedIndex].mostUsedFieldName ?? '—') : '—'}</div></div>
                     </div>
                   ) : (
                     <p className="text-gray-400 dark:text-gray-500 text-xs">—</p>
@@ -3355,7 +3395,7 @@ export function IndicesTabContent({
                 <div className="rounded-lg border border-gray-200 dark:border-gray-700 p-3 bg-gray-50/60 dark:bg-gray-900/20">
                   <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-2">
                     <div className="rounded-md border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 px-2 py-1.5">
-                      <div className="text-[10px] uppercase tracking-wider text-gray-500 dark:text-gray-400">Field count</div>
+                      <div className="text-[10px] uppercase tracking-wider text-gray-500 dark:text-gray-400">Total fields</div>
                       <div className="text-sm font-semibold text-gray-900 dark:text-gray-100 tabular-nums">
                         {Intl.NumberFormat('en-US').format(selectedIndexMappingSummary.totalFields)}
                       </div>
@@ -3566,12 +3606,15 @@ export function IndicesTabContent({
         {indexDetailModal}
         {fieldsPopoverIndex && (() => {
           const summary = fieldUsageAllMap[fieldsPopoverIndex];
-          const fieldList = summary?.fieldList ?? [];
+          const fieldList = fieldsPopoverMode === 'used'
+            ? (summary?.fieldList ?? []).filter((f) => f.usage > 0)
+            : (summary?.fieldList ?? []);
           return (
             <FieldsPopoverContent
               indexName={fieldsPopoverIndex}
               summary={summary}
               fieldList={fieldList}
+              mode={fieldsPopoverMode}
               usageTypeInfoOpen={usageTypeInfoOpen}
               setUsageTypeInfoOpen={setUsageTypeInfoOpen}
               onClose={() => {
@@ -3912,6 +3955,11 @@ export function IndicesTabContent({
                   {ilmAllExpanded && ilmAllLoading && (
                     <span className="text-xs text-gray-500 dark:text-gray-400">Loading…</span>
                   )}
+                  {ilmAllExpanded && !ilmAllLoading && !ilmAllError && (
+                    <span className="inline-flex items-center rounded-md border border-amber-300 bg-amber-50 px-1.5 py-0.5 text-[11px] font-medium text-amber-800 dark:border-amber-800/60 dark:bg-amber-900/30 dark:text-amber-200">
+                      Without ILM: {ilmWithoutCount}
+                    </span>
+                  )}
                 </>
               }
             />
@@ -3980,11 +4028,12 @@ export function IndicesTabContent({
             )}
             <div className="tab-section-scroll tab-section-scroll-flush">
             <div className="overflow-x-auto">
-              <table className="w-full min-w-[1400px] text-left tab-content-value border-collapse table-fixed">
+              <table className="w-full min-w-[1500px] text-left tab-content-value border-collapse table-fixed">
                 <thead>
                   <tr className="border-b-2 border-gray-300 bg-gray-100 dark:border-gray-600 dark:bg-gray-800">
                     {[
                       { key: 'index', label: 'Index', align: '' },
+                      { key: 'ilm_status', label: 'ILM', align: '' },
                       { key: 'primary_total', label: 'Primary / Total', align: 'text-right' },
                       { key: 'shard_sizes', label: 'Shard sizes', align: '' },
                       { key: 'phase', label: 'Phase', align: '' },
@@ -3996,6 +4045,7 @@ export function IndicesTabContent({
                         key={col.key}
                         className={`px-3 py-2.5 font-bold text-gray-900 dark:text-gray-50 tab-content-value cursor-pointer select-none hover:bg-gray-200 dark:hover:bg-gray-700 ${col.align} ${
                           col.key === 'index' ? 'w-[360px]' :
+                          col.key === 'ilm_status' ? 'w-[120px]' :
                           col.key === 'primary_total' ? 'w-[120px]' :
                           col.key === 'shard_sizes' ? 'w-[160px]' :
                           col.key === 'phase' ? 'w-[90px]' :
@@ -4024,7 +4074,7 @@ export function IndicesTabContent({
                 <tbody>
                   {ilmAllPaginatedRows.length === 0 ? (
                     <tr>
-                      <td colSpan={7} className="px-3 py-4 text-center text-gray-500 dark:text-gray-400">
+                      <td colSpan={8} className="px-3 py-4 text-center text-gray-500 dark:text-gray-400">
                         {ilmAllLoading ? 'Loading…' : 'No indices match the filter.'}
                       </td>
                     </tr>
@@ -4050,6 +4100,17 @@ export function IndicesTabContent({
                               {r.policy}
                             </div>
                           </div>
+                        </td>
+                        <td className="px-3 py-2 tab-content-value w-[120px] align-top">
+                          {r.managed ? (
+                            <span className="inline-flex rounded px-1.5 py-0.5 text-[11px] font-medium bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-200">
+                              Managed
+                            </span>
+                          ) : (
+                            <span className="inline-flex rounded px-1.5 py-0.5 text-[11px] font-medium bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-200">
+                              Without ILM
+                            </span>
+                          )}
                         </td>
                         <td className="px-3 py-2 font-mono tabular-nums text-right w-[120px]" title={`Replicas: ${Math.max(0, r.totalCount - r.primaryCount)}`}>
                           {r.primaryCount} / {r.totalCount}
@@ -4444,10 +4505,10 @@ export function IndicesTabContent({
                   >
                     <div className="space-y-3">
                       <p>
-                        Index list from <code className="bg-gray-100 dark:bg-gray-700 px-1 rounded">GET _cat/indices</code>. Click an index name to open details (mapping, settings, ILM, field usage). Field count and usage come from <code className="bg-gray-100 dark:bg-gray-700 px-1 rounded">GET _all/_mapping</code> and <code className="bg-gray-100 dark:bg-gray-700 px-1 rounded">GET _field_usage_stats</code>.
+                        Index list from <code className="bg-gray-100 dark:bg-gray-700 px-1 rounded">GET _cat/indices</code>. Click an index name to open details (mapping, settings, ILM, field usage). Total fields and usage come from <code className="bg-gray-100 dark:bg-gray-700 px-1 rounded">GET _all/_mapping</code> and <code className="bg-gray-100 dark:bg-gray-700 px-1 rounded">GET _field_usage_stats</code>.
                       </p>
                       <p className="rounded bg-amber-50 px-2 py-1.5 text-xs text-amber-800 dark:bg-amber-900/30 dark:text-amber-200">
-                        <strong>Note:</strong> Field usage stats require <strong>Elasticsearch 7.15.0+</strong>. Not available in OpenSearch or older ES versions. Unsearched fields and most-used field will show — when unavailable.
+                        <strong>Note:</strong> Field usage stats require <strong>Elasticsearch 7.15.0+</strong>. Not available in OpenSearch or older ES versions. Used and unsearched fields will show — when unavailable.
                       </p>
                       <p className="font-medium">Unsearched field count</p>
                       <p>
@@ -4811,12 +4872,15 @@ export function IndicesTabContent({
 
       {fieldsPopoverIndex && (() => {
         const summary = fieldUsageAllMap[fieldsPopoverIndex];
-        const fieldList = summary?.fieldList ?? [];
+        const fieldList = fieldsPopoverMode === 'used'
+          ? (summary?.fieldList ?? []).filter((f) => f.usage > 0)
+          : (summary?.fieldList ?? []);
         return (
           <FieldsPopoverContent
             indexName={fieldsPopoverIndex}
             summary={summary}
             fieldList={fieldList}
+            mode={fieldsPopoverMode}
             usageTypeInfoOpen={usageTypeInfoOpen}
             setUsageTypeInfoOpen={setUsageTypeInfoOpen}
             onClose={() => {

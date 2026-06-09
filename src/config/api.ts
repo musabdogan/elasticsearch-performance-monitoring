@@ -6,7 +6,7 @@ export const apiConfig = {
   pollIntervalMs: 10000,
   /** Interval for alert-only fetch (separate from metrics). Fetches all APIs needed for alerts. */
   alertIntervalMs: 60000,
-  requestTimeoutMs: 10000,
+  requestTimeoutMs: 30000,
   /** Max attempts for a single request when it times out (1 initial + 2 retries = 3 total). */
   requestMaxAttempts: 3,
   healthCheckTimeoutMs: 3000,

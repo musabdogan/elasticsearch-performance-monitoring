@@ -630,6 +630,7 @@ export default function App() {
               modalOnly
               externalOpenIndex={globalIndexModalIndex}
               onExternalModalClose={() => setGlobalIndexModalIndex(null)}
+              onOpenNodeDetails={(nodeName) => setGlobalNodeModalNode(nodeName)}
             />
             <NodesTabContent
               modalOnly

@@ -33,6 +33,7 @@ type ProcessedIndexRow = IndexInfo & {
 
 type FieldUsagePopupSummary = {
   totalFields: number;
+  usedFields: number;
   unusedFields: number;
   mostUsedFieldName: string | null;
   hasUsageData: boolean;
@@ -196,6 +197,7 @@ const IndexTable = memo<IndexTableProps>(({
     const totalFields = totalFieldsFromMapping > 0 ? totalFieldsFromMapping : userFields.size;
     return {
       totalFields,
+      usedFields,
       unusedFields: Math.max(0, totalFields - usedFields),
       mostUsedFieldName,
       hasUsageData: Array.isArray(shards) && shards.length > 0
@@ -816,9 +818,9 @@ const IndexTable = memo<IndexTableProps>(({
                         <h3 className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">Field usage</h3>
                         {detailFieldUsage ? (
                           <div className="space-y-1.5">
-                            <div><span className="block text-xs text-gray-500 dark:text-gray-400">Field count</span><span className="font-mono">{detailFieldUsage.totalFields}</span></div>
+                            <div><span className="block text-xs text-gray-500 dark:text-gray-400">Total fields</span><span className="font-mono">{detailFieldUsage.totalFields}</span></div>
+                            <div><span className="block text-xs text-gray-500 dark:text-gray-400">Used fields</span><span className="font-mono">{detailFieldUsage.hasUsageData ? `${detailFieldUsage.usedFields} fields` : '—'}</span></div>
                             <div><span className="block text-xs text-gray-500 dark:text-gray-400">Unsearched fields</span><span className="font-mono">{detailFieldUsage.hasUsageData ? `${detailFieldUsage.unusedFields} fields` : '—'}</span></div>
-                            <div><span className="block text-xs text-gray-500 dark:text-gray-400">Most used field</span><span className="font-mono break-all">{detailFieldUsage.hasUsageData ? (detailFieldUsage.mostUsedFieldName ?? '—') : '—'}</span></div>
                           </div>
                         ) : (
                           <p className="text-xs text-gray-400 dark:text-gray-500">—</p>
