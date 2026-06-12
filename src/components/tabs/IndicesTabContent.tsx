@@ -7,28 +7,26 @@ import {
   getIlmExplain,
   getFieldUsageStats,
   getCatShardsPlacement,
-  getCatShardsForIndex,
   getAllMappings,
   getDataStreams,
   getCatShardsBytes,
   getNodesRoles,
-  getNetworkErrorMessage,
-  getIndexStatsForIndex
+  getNetworkErrorMessage
 } from '@/services/elasticsearch';
 import type {
   CatIndexRow,
   CatAliasRow,
   CatShardRow,
-  IndexDetailsResponse,
   IlmExplainResponse,
   FieldUsageStatsResponse,
   DataStreamInfo,
   DataStreamsResponse
 } from '@/types/api';
+import type { OpenIndexDetailsFn } from '@/types/indexDetail';
 import Pagination from '@/components/data/Pagination';
 import { InfoPopup } from '@/components/ui/InfoPopup';
 import { TabSectionExpandTrigger } from '@/components/ui/TabSectionExpandTrigger';
-import { formatNumber, formatRelativeTimeShort } from '@/utils/format';
+import { formatNumber } from '@/utils/format';
 import {
   hasSearchTerms,
   matchesParsedTermsInAnyText,
@@ -161,96 +159,6 @@ function getFieldUsageTypes(data: Record<string, unknown>): string[] {
 }
 
 type MappingsResponse = Record<string, { mappings?: { properties?: Record<string, unknown> } }>;
-
-type MappingSummary = {
-  totalFields: number;
-  typeCounts: Record<string, number>;
-  distinctTypeCount: number;
-  textFieldCount: number;
-  keywordFieldCount: number;
-  analyzerNames: string[];
-  searchAnalyzerNames: string[];
-  definedAnalyzerNames: string[];
-};
-
-function collectMappingStatsFromField(
-  fieldDefRaw: unknown,
-  out: {
-    typeCounts: Record<string, number>;
-    analyzerNames: Set<string>;
-    searchAnalyzerNames: Set<string>;
-  }
-): void {
-  if (!fieldDefRaw || typeof fieldDefRaw !== 'object') return;
-  const fieldDef = fieldDefRaw as Record<string, unknown>;
-
-  if (typeof fieldDef.type === 'string' && fieldDef.type.trim()) {
-    const fieldType = fieldDef.type.trim();
-    out.typeCounts[fieldType] = (out.typeCounts[fieldType] ?? 0) + 1;
-  }
-  if (typeof fieldDef.analyzer === 'string' && fieldDef.analyzer.trim()) {
-    out.analyzerNames.add(fieldDef.analyzer.trim());
-  }
-  if (typeof fieldDef.search_analyzer === 'string' && fieldDef.search_analyzer.trim()) {
-    out.searchAnalyzerNames.add(fieldDef.search_analyzer.trim());
-  }
-
-  const properties = fieldDef.properties;
-  if (properties && typeof properties === 'object') {
-    for (const value of Object.values(properties as Record<string, unknown>)) {
-      collectMappingStatsFromField(value, out);
-    }
-  }
-
-  const multiFields = fieldDef.fields;
-  if (multiFields && typeof multiFields === 'object') {
-    for (const value of Object.values(multiFields as Record<string, unknown>)) {
-      collectMappingStatsFromField(value, out);
-    }
-  }
-}
-
-function buildMappingSummary(
-  indexName: string,
-  indexDetails: IndexDetailsResponse | null
-): MappingSummary | null {
-  if (!indexName || !indexDetails?.[indexName]) return null;
-  const detailEntry = indexDetails[indexName] as
-    | {
-        mappings?: { properties?: Record<string, unknown> };
-        settings?: { index?: { analysis?: { analyzer?: Record<string, unknown> } } };
-      }
-    | undefined;
-
-  const rootProps = detailEntry?.mappings?.properties;
-  if (!rootProps || typeof rootProps !== 'object') return null;
-
-  const collected = {
-    typeCounts: {} as Record<string, number>,
-    analyzerNames: new Set<string>(),
-    searchAnalyzerNames: new Set<string>()
-  };
-  for (const value of Object.values(rootProps)) {
-    collectMappingStatsFromField(value, collected);
-  }
-
-  const definedAnalyzerNames = Object.keys(
-    detailEntry?.settings?.index?.analysis?.analyzer ?? {}
-  ).sort((a, b) => a.localeCompare(b));
-  const totalFields = Object.values(collected.typeCounts).reduce((sum, count) => sum + count, 0);
-  const distinctTypeCount = Object.keys(collected.typeCounts).length;
-
-  return {
-    totalFields,
-    typeCounts: collected.typeCounts,
-    distinctTypeCount,
-    textFieldCount: collected.typeCounts.text ?? 0,
-    keywordFieldCount: collected.typeCounts.keyword ?? 0,
-    analyzerNames: Array.from(collected.analyzerNames).sort((a, b) => a.localeCompare(b)),
-    searchAnalyzerNames: Array.from(collected.searchAnalyzerNames).sort((a, b) => a.localeCompare(b)),
-    definedAnalyzerNames
-  };
-}
 
 function parseFieldUsageIndexLite(
   indexName: string,
@@ -553,7 +461,7 @@ function FieldsPopoverContent({
   );
 }
 
-const INDICES_KIBANA_SNIPPET = `POST _security/user/your_monitoring_user
+const INDICES_KIBANA_SNIPPET = `POST _security/user/your_user
 {
   "password": "your_password",
   "roles": ["monitoring_user", "viewer"]
@@ -720,7 +628,7 @@ type IndexExplorerSectionProps = {
   expanded: boolean;
   onToggleExpanded: () => void;
   onRefreshStateChange?: (loading: boolean) => void;
-  onOpenIndexDetails?: (indexName: string) => void;
+  onOpenIndexDetails?: OpenIndexDetailsFn;
 };
 
 function IndexExplorerSection({
@@ -1010,7 +918,7 @@ function IndexExplorerSection({
                           <button
                             type="button"
                             onClick={() => onOpenIndexDetails?.(row.record.indexName)}
-                            className="truncate font-mono text-blue-600 hover:underline dark:text-blue-400 text-left"
+                            className="truncate font-mono entity-name-link text-left"
                             title={row.record.indexName}
                           >
                             {row.record.indexName}
@@ -1061,16 +969,14 @@ function IndexExplorerSection({
 
 export function IndicesTabContent({
   onRefreshStateChange,
-  modalOnly = false,
-  externalOpenIndex = null,
-  onExternalModalClose,
-  onOpenNodeDetails
+  onOpenIndexDetails,
+  onOpenNodeDetails,
+  onOpenInQuery
 }: {
   onRefreshStateChange?: (loading: boolean) => void;
-  modalOnly?: boolean;
-  externalOpenIndex?: string | null;
-  onExternalModalClose?: () => void;
+  onOpenIndexDetails?: OpenIndexDetailsFn;
   onOpenNodeDetails?: (nodeName: string) => void;
+  onOpenInQuery?: (indexName: string) => void;
 } = {}) {
   const { activeCluster, isClusterUnreachable } = useMonitoring();
   const activeClusterRef = useRef(activeCluster);
@@ -1094,39 +1000,9 @@ export function IndicesTabContent({
   const [fieldsPopoverMode, setFieldsPopoverMode] = useState<'all' | 'used'>('all');
   const [unsearchedFieldsPopoverIndex, setUnsearchedFieldsPopoverIndex] = useState<string | null>(null);
   const [usageTypeInfoOpen, setUsageTypeInfoOpen] = useState(false);
-  const [selectedIndex, setSelectedIndex] = useState<string | null>(null);
-  type IndexDetailTab = 'overview' | 'mappings' | 'settings' | 'ilm';
-  const [indexDetailTab, setIndexDetailTab] = useState<IndexDetailTab>('overview');
-  const [indexDetailAliasesOpen, setIndexDetailAliasesOpen] = useState(false);
-  const [indexShardsExpanded, setIndexShardsExpanded] = useState(false);
-  const indexDetailAliasesRef = useRef<HTMLButtonElement | null>(null);
-  const indexDetailBackdropMouseDownRef = useRef(false);
-  const unsearchedBackdropMouseDownRef = useRef(false);
   const rolloverAlertBackdropMouseDownRef = useRef(false);
   const dataStreamBackdropMouseDownRef = useRef(false);
   const aliasesBackdropMouseDownRef = useRef(false);
-  const closeIndexModal = useCallback(() => {
-    setSelectedIndex(null);
-    if (modalOnly) onExternalModalClose?.();
-  }, [modalOnly, onExternalModalClose]);
-
-  const SHARD_ALLOCATION_VISIBLE = 6;
-
-  useEffect(() => {
-    setIndexDetailAliasesOpen(false);
-    setIndexShardsExpanded(false);
-    setIndexPerfMetrics(null);
-    setIndexPerfError(null);
-    setIndexPerfLoading(true);
-    setIndexPerfInitialized(false);
-  }, [selectedIndex]);
-
-  const [detailLoading, setDetailLoading] = useState(false);
-  const [indexDetails, setIndexDetails] = useState<IndexDetailsResponse | null>(null);
-  const [indexShards, setIndexShards] = useState<CatShardRow[] | null>(null);
-  const [ilmExplain, setIlmExplain] = useState<IlmExplainResponse | null>(null);
-  const [ilmForbidden, setIlmForbidden] = useState(false);
-  const [ilmUnavailable, setIlmUnavailable] = useState(false);
   const [fieldUsageAllMap, setFieldUsageAllMap] = useState<Record<string, FieldUsageSummary>>({});
   const [fieldUsageBuildTotal, setFieldUsageBuildTotal] = useState(0);
   const [fieldUsageBuildProcessed, setFieldUsageBuildProcessed] = useState(0);
@@ -1171,26 +1047,6 @@ export function IndicesTabContent({
   >('ilmAge');
   const [dataStreamModalSortDirection, setDataStreamModalSortDirection] = useState<'asc' | 'desc'>('desc');
 
-  type IndexPerfSampleRaw = {
-    timestamp: number;
-    indexOps: number;
-    indexTimeMs: number;
-    searchOps: number;
-    searchTimeMs: number;
-  };
-
-  type IndexPerfMetrics = {
-    indexingRate: number;
-    searchRate: number;
-    indexLatency: number;
-    searchLatency: number;
-  };
-
-  const [indexPerfMetrics, setIndexPerfMetrics] = useState<IndexPerfMetrics | null>(null);
-  const [indexPerfLoading, setIndexPerfLoading] = useState(true);
-  const [indexPerfError, setIndexPerfError] = useState<string | null>(null);
-  const [indexPerfInitialized, setIndexPerfInitialized] = useState(false);
-  const indexPerfPrevRef = useRef<IndexPerfSampleRaw | null>(null);
   const [dataStreamIlmLoading, setDataStreamIlmLoading] = useState(false);
   const [dataStreamIlmError, setDataStreamIlmError] = useState<string | null>(null);
   const [dataStreamIlmExplain, setDataStreamIlmExplain] = useState<IlmExplainResponse | null>(null);
@@ -1237,7 +1093,7 @@ export function IndicesTabContent({
 
   const fetchCatalogAndLists = useCallback(async () => {
     const cluster = activeClusterRef.current;
-    if (!cluster || modalOnly || isClusterUnreachable) return;
+    if (!cluster || isClusterUnreachable) return;
     setLoading(true);
     setError(null);
     setForbidden(false);
@@ -1316,14 +1172,7 @@ export function IndicesTabContent({
     } finally {
       setLoading(false);
     }
-  }, [clusterKey, indicesExpanded, modalOnly, isClusterUnreachable]);
-
-  useEffect(() => {
-    if (!externalOpenIndex) return;
-    setSelectedIndex(externalOpenIndex);
-    setIndexDetailTab('overview');
-    // Modal-only kullanımında katalog fetch etmek zorunlu değil; sadece modal için gerekli API'ler çalışır.
-  }, [externalOpenIndex]);
+  }, [clusterKey, indicesExpanded, isClusterUnreachable]);
 
   const ensureFieldUsageDetails = useCallback(
     (indexName: string) => {
@@ -1333,26 +1182,8 @@ export function IndicesTabContent({
       const fieldUsage = latestFieldUsageRef.current;
       const mappingsFromAll = latestMappingsRef.current;
 
-      // Build an effective mappings object for this index:
-      // 1) Önce all/_mapping cache'ine bak
-      // 2) Yoksa indexDetails içindeki mapping'i fallback olarak kullan
-      let effectiveMappings: MappingsResponse | null = null;
-      if (mappingsFromAll && mappingsFromAll[indexName]) {
-        effectiveMappings = mappingsFromAll;
-      } else {
-        const idxDetailsEntry = indexDetails?.[indexName] as
-          | { mappings?: { properties?: Record<string, unknown> } }
-          | undefined;
-        if (idxDetailsEntry?.mappings) {
-          effectiveMappings = {
-            [indexName]: { mappings: idxDetailsEntry.mappings }
-          };
-          latestMappingsRef.current = {
-            ...(mappingsFromAll ?? {}),
-            ...effectiveMappings
-          };
-        }
-      }
+      const effectiveMappings: MappingsResponse | null =
+        mappingsFromAll && mappingsFromAll[indexName] ? mappingsFromAll : null;
 
       // Fast path: we already have usage data cached for this specific index (from a previous call),
       // or we have mappings available to derive field counts/unsearched fields.
@@ -1438,7 +1269,7 @@ export function IndicesTabContent({
         }
       })();
     },
-    [indexDetails]
+    []
   );
 
   useEffect(() => {
@@ -1450,9 +1281,6 @@ export function IndicesTabContent({
       mappingsCacheRef.current = null;
       setForbidden(false);
       setCatalogPage(1);
-      setSelectedIndex(null);
-      setIndexDetails(null);
-      setIlmExplain(null);
       setCatalogPageSize(DEFAULT_PAGE_SIZE);
       setDataStreamsExpanded(false);
       // Keep indicesExpanded as-is; user controls when to expand and fetch
@@ -1830,11 +1658,11 @@ export function IndicesTabContent({
   }, [selectedDataStreamName, clusterKey, dataStreamBackingIndicesMap]);
 
   useEffect(() => {
-    if (modalOnly || !dataStreamsExpanded || isClusterUnreachable) return;
+    if (!dataStreamsExpanded || isClusterUnreachable) return;
     const controller = new AbortController();
     void fetchDataStreamsTierRows(controller.signal);
     return () => controller.abort();
-  }, [modalOnly, dataStreamsExpanded, fetchDataStreamsTierRows, isClusterUnreachable]);
+  }, [dataStreamsExpanded, fetchDataStreamsTierRows, isClusterUnreachable]);
 
   const filteredDataStreams = useMemo(() => {
     const parsed = parseSearchTerms(dataStreamsSearchTerm);
@@ -2510,126 +2338,6 @@ export function IndicesTabContent({
     onRefreshStateChange
   ]);
 
-  useEffect(() => {
-    if (!selectedIndex || !activeCluster) {
-      setIndexDetails(null);
-      setIndexShards(null);
-      setIlmExplain(null);
-      setIlmForbidden(false);
-      setIlmUnavailable(false);
-      return;
-    }
-    const controller = new AbortController();
-    const signal = controller.signal;
-    setDetailLoading(true);
-    setIlmForbidden(false);
-    setIlmUnavailable(false);
-    Promise.all([
-      getIndexDetails(activeCluster, selectedIndex, signal).catch(() => null),
-      getCatShardsForIndex(activeCluster, selectedIndex, signal).catch(() => [] as CatShardRow[]),
-      getIlmExplain(activeCluster, selectedIndex, signal).catch((e) => {
-        const msg = e instanceof Error ? e.message : '';
-        if (msg.includes('403') || msg.toLowerCase().includes('forbidden')) setIlmForbidden(true);
-        else if (msg.includes('404') || msg.includes('400') || msg.includes('no handler')) setIlmUnavailable(true);
-        return null;
-      })
-    ]).then(([details, shards, ilm]) => {
-      setIndexDetails(details ?? null);
-      setIndexShards(Array.isArray(shards) ? shards : null);
-      setIlmExplain(ilm ?? null);
-      setDetailLoading(false);
-    });
-    return () => controller.abort();
-  }, [selectedIndex, activeCluster?.baseUrl]);
-
-  // When an index is selected (from catalog or Shards Map), ensure we also load
-  // its field usage details so the Overview > Field usage card can show data
-  // without requiring a separate click in the Field usage tab.
-  useEffect(() => {
-    if (!selectedIndex) return;
-    ensureFieldUsageDetails(selectedIndex);
-  }, [selectedIndex, ensureFieldUsageDetails]);
-
-  useEffect(() => {
-    if (!selectedIndex || !activeCluster || isClusterUnreachable) {
-      setIndexPerfMetrics(null);
-      setIndexPerfError(null);
-      indexPerfPrevRef.current = null;
-      return;
-    }
-
-    let cancelled = false;
-    const controller = new AbortController();
-    const signal = controller.signal;
-
-    const fetchOnce = async () => {
-      if (cancelled) return;
-      try {
-        setIndexPerfError(null);
-        const stats = await getIndexStatsForIndex(activeCluster, selectedIndex, signal);
-        if (!stats || !stats.indices) {
-          // No stats yet; keep waiting without marking as initialized
-          return;
-        }
-        const entry = Object.values(stats.indices)[0];
-        if (!entry) {
-          return;
-        }
-        const prim = entry.primaries?.indexing;
-        const search = entry.total?.search;
-        if (!prim || !search) {
-          return;
-        }
-        const now = Date.now();
-        const raw: IndexPerfSampleRaw = {
-          timestamp: now,
-          indexOps: prim.index_total ?? 0,
-          indexTimeMs: prim.index_time_in_millis ?? 0,
-          searchOps: search.query_total ?? 0,
-          searchTimeMs: search.query_time_in_millis ?? 0
-        };
-        const prev = indexPerfPrevRef.current;
-        indexPerfPrevRef.current = raw;
-        if (!prev) {
-          // First sample: wait for next interval to compute deltas
-          return;
-        }
-        const dtSec = Math.max(1, (raw.timestamp - prev.timestamp) / 1000);
-        const indexOpsDelta = Math.max(0, raw.indexOps - prev.indexOps);
-        const searchOpsDelta = Math.max(0, raw.searchOps - prev.searchOps);
-        const indexTimeDelta = Math.max(0, raw.indexTimeMs - prev.indexTimeMs);
-        const searchTimeDelta = Math.max(0, raw.searchTimeMs - prev.searchTimeMs);
-        const indexingRate = indexOpsDelta / dtSec;
-        const searchRate = searchOpsDelta / dtSec;
-        const indexLatency = indexOpsDelta > 0 ? indexTimeDelta / indexOpsDelta : 0;
-        const searchLatency = searchOpsDelta > 0 ? searchTimeDelta / searchOpsDelta : 0;
-        setIndexPerfMetrics({
-          indexingRate,
-          searchRate,
-          indexLatency,
-          searchLatency
-        });
-        setIndexPerfLoading(false);
-        setIndexPerfInitialized(true);
-      } catch (e) {
-        if (cancelled) return;
-        const msg = e instanceof Error ? e.message : 'Failed to load index performance';
-        setIndexPerfError(msg);
-        setIndexPerfLoading(false);
-        setIndexPerfInitialized(true);
-      }
-    };
-
-    fetchOnce();
-    const intervalId = window.setInterval(fetchOnce, 10000);
-
-    return () => {
-      cancelled = true;
-      controller.abort();
-      window.clearInterval(intervalId);
-    };
-  }, [selectedIndex, activeCluster, isClusterUnreachable]);
-
   const filteredCatalog = useMemo(() => {
     const parsed = parseSearchTerms(searchTerm);
     if (!hasSearchTerms(parsed)) return catalog;
@@ -2737,18 +2445,6 @@ export function IndicesTabContent({
   }, [aliasesPopoverIndex]);
 
   useEffect(() => {
-    if (!selectedIndex) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        if (indexDetailAliasesOpen) setIndexDetailAliasesOpen(false);
-        else closeIndexModal();
-      }
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [selectedIndex, indexDetailAliasesOpen, closeIndexModal]);
-
-  useEffect(() => {
     if (!fieldsPopoverIndex) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
@@ -2807,19 +2503,26 @@ export function IndicesTabContent({
         header: 'Index',
         className: 'font-mono tab-content-value',
         render: (row: CatIndexRow) => (
-          <button
-            type="button"
-            onClick={() => {
-              if (row.index === selectedIndex) setSelectedIndex(null);
-              else {
-                setSelectedIndex(row.index ?? null);
-                setIndexDetailTab('overview');
-              }
-            }}
-            className="text-left font-mono tab-content-value text-blue-600 dark:text-blue-400 hover:underline break-all min-w-0"
-          >
-            {row.index ?? '—'}
-          </button>
+          <div className="flex items-center gap-1 min-w-0">
+            <button
+              type="button"
+              onClick={() => onOpenIndexDetails?.(row.index ?? '')}
+              className="min-w-0 flex-1 text-left font-mono tab-content-value entity-name-link break-all"
+            >
+              {row.index ?? '—'}
+            </button>
+            {onOpenInQuery && row.index && (
+              <button
+                type="button"
+                onClick={() => onOpenInQuery(row.index ?? '')}
+                title="Open in Query tab"
+                className="shrink-0 rounded p-0.5 text-gray-500 hover:bg-gray-100 hover:text-blue-600 dark:text-gray-400 dark:hover:bg-gray-700 dark:hover:text-blue-400"
+                aria-label={`Query ${row.index}`}
+              >
+                <Search className="h-3.5 w-3.5" />
+              </button>
+            )}
+          </div>
         )
       },
       {
@@ -2920,631 +2623,10 @@ export function IndicesTabContent({
         }
       }
     ],
-    [selectedIndex, indexToAliases, fieldUsageAllMap, handleUsedFieldsClick, handleUnsearchedFieldsClick]
-  );
-
-  const selectedCatalogRow = useMemo(
-    () => (selectedIndex ? catalog.find((r) => r.index === selectedIndex) : undefined),
-    [catalog, selectedIndex]
-  );
-
-  const overviewRow = useMemo(() => {
-    if (selectedCatalogRow) return selectedCatalogRow;
-    if (!selectedIndex) return undefined;
-    if (!indexShards || indexShards.length === 0) return undefined;
-
-    const priCount = indexShards.filter((s) => s.prirep === 'p').length;
-    const repCount = indexShards.filter((s) => s.prirep === 'r').length;
-    const repFactor = priCount > 0 ? Math.max(0, Math.round(repCount / priCount)) : 0;
-
-    const totalStoreBytes = indexShards.reduce((sum, s) => sum + parseCatByteSizeToBytes(s.store), 0);
-    const primaryStoreBytes = indexShards
-      .filter((s) => s.prirep === 'p')
-      .reduce((sum, s) => sum + parseCatByteSizeToBytes(s.store), 0);
-    const primaryDocs = indexShards
-      .filter((s) => s.prirep === 'p')
-      .reduce((sum, s) => sum + (parseInt(String(s.docs ?? '0'), 10) || 0), 0);
-
-    const hasPrimaryIssue = indexShards.some((s) => s.prirep === 'p' && s.state !== 'STARTED');
-    const hasReplicaIssue = indexShards.some((s) => s.prirep !== 'p' && s.state !== 'STARTED');
-    const health = hasPrimaryIssue ? 'red' : hasReplicaIssue ? 'yellow' : 'green';
-
-    return {
-      index: selectedIndex,
-      health,
-      pri: String(priCount),
-      rep: String(repFactor),
-      'store.size': totalStoreBytes > 0 ? formatBytesCompact(totalStoreBytes).replace(' ', '').toLowerCase() : '—',
-      'pri.store.size': primaryStoreBytes > 0 ? formatBytesCompact(primaryStoreBytes).replace(' ', '').toLowerCase() : '—',
-      'docs.count': String(primaryDocs),
-      'docs.deleted': '—'
-    } as CatIndexRow;
-  }, [selectedCatalogRow, selectedIndex, indexShards, formatBytesCompact]);
-
-  const INDEX_DETAIL_TABS: { id: IndexDetailTab; label: string }[] = [
-    { id: 'overview', label: 'Overview' },
-    { id: 'mappings', label: 'Mappings' },
-    { id: 'settings', label: 'Settings' },
-    { id: 'ilm', label: 'ILM' }
-  ];
-
-  const selectedIndexMappingSummary = useMemo(
-    () => (selectedIndex ? buildMappingSummary(selectedIndex, indexDetails) : null),
-    [selectedIndex, indexDetails]
-  );
-
-  const indexDetailModal = selectedIndex && (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
-      onMouseDown={(e) => {
-        indexDetailBackdropMouseDownRef.current = e.target === e.currentTarget;
-      }}
-      onClick={(e) => {
-        if (e.target === e.currentTarget && indexDetailBackdropMouseDownRef.current) {
-          closeIndexModal();
-        }
-        indexDetailBackdropMouseDownRef.current = false;
-      }}
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="index-detail-title"
-    >
-      <div
-        className="bg-white dark:bg-gray-800 rounded-xl shadow-xl border border-gray-200 dark:border-gray-700 flex flex-col max-h-[85vh] w-full max-w-4xl min-w-0"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="flex items-center justify-between border-b border-gray-200 dark:border-gray-700 px-4 py-3 shrink-0 gap-3 min-w-0">
-          <div className="min-w-0 flex-1">
-            <h2
-              id="index-detail-title"
-              className="text-sm font-semibold text-gray-900 dark:text-gray-100 font-mono truncate"
-            >
-              {selectedIndex}
-            </h2>
-            {(() => {
-              const aliases = selectedIndex ? (indexToAliases[selectedIndex] ?? []) : [];
-              if (aliases.length === 0) return null;
-              if (aliases.length === 1) {
-                return (
-                  <span
-                    className="mt-0.5 inline-block text-[11px] text-gray-500 dark:text-gray-400 font-mono truncate"
-                    title="Alias"
-                  >
-                    {aliases[0]}
-                  </span>
-                );
-              }
-              const first = aliases[0];
-              const rest = aliases.length - 1;
-              return (
-                <div className="mt-0.5 inline-flex items-center gap-1 text-[11px] text-gray-500 dark:text-gray-400">
-                  <span className="font-mono truncate max-w-[160px]">{first}</span>
-                  <button
-                    type="button"
-                    onClick={() => setIndexDetailAliasesOpen((o) => !o)}
-                    className="text-[11px] text-blue-600 dark:text-blue-400 hover:underline"
-                    title={`Aliases: ${aliases.join(', ')}`}
-                    aria-expanded={indexDetailAliasesOpen}
-                    aria-haspopup="true"
-                    ref={indexDetailAliasesRef}
-                  >
-                    +{rest} more
-                  </button>
-                  {indexDetailAliasesOpen && (
-                    <>
-                      <div
-                        className="fixed inset-0 z-40"
-                        aria-hidden="true"
-                        onClick={() => setIndexDetailAliasesOpen(false)}
-                      />
-                      <div
-                        className="absolute left-4 top-[3.25rem] z-50 min-w-[160px] rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800 shadow-lg py-2 px-2 max-h-48 overflow-y-auto"
-                        role="dialog"
-                        aria-label="All aliases"
-                      >
-                        {aliases.map((al, i) => (
-                          <div
-                            key={i}
-                            className="font-mono text-xs py-1 px-2 text-gray-800 dark:text-gray-200 truncate"
-                          >
-                            {al}
-                          </div>
-                        ))}
-                      </div>
-                    </>
-                  )}
-                </div>
-              );
-            })()}
-          </div>
-          {overviewRow && (
-            <div className="shrink-0 flex items-center gap-2">
-              <span className="text-[11px] text-gray-500 dark:text-gray-400">Health</span>
-              <span
-                className={`inline-flex px-1.5 py-0.5 rounded text-xs font-medium ${healthToBadgeClass(
-                  overviewRow.health
-                )}`}
-              >
-                {overviewRow.health ?? '—'}
-              </span>
-            </div>
-          )}
-          <button
-            type="button"
-            onClick={closeIndexModal}
-            className="p-1.5 rounded text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-700"
-            title="Close"
-            aria-label="Close"
-          >
-            <X className="h-5 w-5" />
-          </button>
-        </div>
-        <div className="flex border-b border-gray-200 dark:border-gray-700 min-w-0 shrink-0">
-          {INDEX_DETAIL_TABS.map(({ id, label }) => (
-            <button
-              key={id}
-              type="button"
-              onClick={() => setIndexDetailTab(id)}
-              className={`flex-1 min-w-0 px-3 py-2.5 text-xs font-medium transition-colors truncate ${
-                indexDetailTab === id
-                  ? 'bg-blue-50 text-blue-700 dark:bg-blue-900/20 dark:text-blue-300 border-b-2 border-blue-500'
-                  : 'text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700/50'
-              }`}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
-        <div className="p-4 overflow-y-auto min-h-0 flex-1">
-          {detailLoading && (
-            <div className="flex items-center gap-2 text-sm text-gray-500">
-              <RefreshCw className="h-4 w-4 animate-spin" />
-              Loading details…
-            </div>
-          )}
-          {!detailLoading && indexDetailTab === 'overview' && overviewRow && (
-            <div className="space-y-4 text-sm">
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
-                {/* Summary */}
-                <div className="space-y-2">
-                  <h4 className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">Summary</h4>
-                  <div className="space-y-2">
-                    <div><span className="text-gray-500 dark:text-gray-400 block text-xs">Health</span><span className={`inline-flex px-1.5 py-0.5 rounded text-xs font-medium ${healthToBadgeClass(overviewRow.health)}`}>{overviewRow.health ?? '—'}</span></div>
-                    <div><span className="text-gray-500 dark:text-gray-400 block text-xs">Primary / Total</span><div className="font-mono text-gray-900 dark:text-gray-100">{overviewRow.pri != null && overviewRow.rep != null ? `${overviewRow.pri} / ${(parseInt(String(overviewRow.pri), 10) || 0) * (1 + (parseInt(String(overviewRow.rep), 10) || 0))}` : '—'}</div></div>
-                    <div><span className="text-gray-500 dark:text-gray-400 block text-xs">Store size</span><div className="font-mono text-gray-900 dark:text-gray-100">{overviewRow['store.size'] ?? '—'}</div></div>
-                    <div><span className="text-gray-500 dark:text-gray-400 block text-xs">Shard size (primary)</span><div className="font-mono text-gray-900 dark:text-gray-100">{overviewRow['pri.store.size'] ?? '—'}</div></div>
-                    <div><span className="text-gray-500 dark:text-gray-400 block text-xs">Doc count</span><div className="font-mono">{typeof overviewRow['docs.count'] === 'string' ? Intl.NumberFormat('en-US').format(parseInt(overviewRow['docs.count'], 10) || 0) : Intl.NumberFormat('en-US').format(Number(overviewRow['docs.count']) || 0)}</div></div>
-                    <div><span className="text-gray-500 dark:text-gray-400 block text-xs">Deleted doc count</span><div className="font-mono">{overviewRow['docs.deleted'] != null && overviewRow['docs.deleted'] !== '—' ? Intl.NumberFormat('en-US').format(parseInt(String(overviewRow['docs.deleted']), 10) || 0) : '—'}</div></div>
-                  </div>
-                </div>
-                {/* Index config */}
-                <div className="space-y-2">
-                  <h4 className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">Index config</h4>
-                  <div className="space-y-2">
-                    <div>
-                      <span className="text-gray-500 dark:text-gray-400 block text-xs">Created at</span>
-                      <div
-                        className="font-mono"
-                        title={
-                          (indexDetails?.[selectedIndex] as { settings?: { index?: { creation_date_string?: string } } } | undefined)
-                            ?.settings?.index?.creation_date_string
-                        }
-                      >
-                        {formatRelativeTimeShort(
-                          (indexDetails?.[selectedIndex] as { settings?: { index?: { creation_date_string?: string } } } | undefined)
-                            ?.settings?.index?.creation_date_string
-                        )}
-                      </div>
-                    </div>
-                    <div><span className="text-gray-500 dark:text-gray-400 block text-xs">Refresh interval</span><div className="font-mono">{(indexDetails?.[selectedIndex] && (indexDetails[selectedIndex] as { settings?: { index?: { refresh_interval?: string } } }).settings?.index?.refresh_interval) ?? '1s'}</div></div>
-                    <div><span className="text-gray-500 dark:text-gray-400 block text-xs">Index mode</span><div className="font-mono">{(indexDetails?.[selectedIndex] as { settings?: { index?: { mode?: string } } } | undefined)?.settings?.index?.mode ?? 'standard'}</div></div>
-                    <div><span className="text-gray-500 dark:text-gray-400 block text-xs">Version</span><div className="font-mono">{(indexDetails?.[selectedIndex] as { settings?: { index?: { version?: { created_string?: string } } } })?.settings?.index?.version?.created_string ?? '—'}</div></div>
-                    <div><span className="text-gray-500 dark:text-gray-400 block text-xs">Tier</span><div className="font-mono">{(() => {
-                      const idx = indexDetails?.[selectedIndex] as { settings?: { index?: { tier?: string; routing?: { allocation?: { include?: { _tier_preference?: string } } } } } } | undefined;
-                      const s = idx?.settings?.index;
-                      const tierRaw = s?.tier ?? s?.routing?.allocation?.include?._tier_preference ?? '';
-                      if (!tierRaw) return '—';
-                      const TIER_ORDER = ['data_hot', 'data_warm', 'data_cold', 'data_frozen'];
-                      const parts = tierRaw.split(',').map((p) => p.trim()).filter(Boolean);
-                      const sorted = [...parts].sort((a, b) => TIER_ORDER.indexOf(a) - TIER_ORDER.indexOf(b));
-                      return sorted.length === 0 ? tierRaw : sorted.map((t) => <span key={t} className="block">{t}</span>);
-                    })()}</div></div>
-                  </div>
-                </div>
-                {/* Indexing & search */}
-                <div className="space-y-2">
-                  <h4 className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">
-                    Indexing &amp; search
-                  </h4>
-                  {indexPerfLoading && !indexPerfMetrics && (
-                    <p className="text-xs text-gray-500 dark:text-gray-400">Loading indexing &amp; search metrics…</p>
-                  )}
-                  {!indexPerfLoading && indexPerfError && (
-                    <p className="text-xs text-amber-600 dark:text-amber-300">
-                      {indexPerfError}
-                    </p>
-                  )}
-                  {!indexPerfError && indexPerfMetrics && (
-                    <div className="space-y-1.5">
-                      <div>
-                        <span className="text-gray-500 dark:text-gray-400 block text-xs">Indexing rate</span>
-                        <div className="font-mono text-gray-900 dark:text-gray-100">
-                          {indexPerfMetrics.indexingRate.toFixed(1)}
-                        </div>
-                      </div>
-                      <div>
-                        <span className="text-gray-500 dark:text-gray-400 block text-xs">Search rate</span>
-                        <div className="font-mono text-gray-900 dark:text-gray-100">
-                          {indexPerfMetrics.searchRate.toFixed(1)}
-                        </div>
-                      </div>
-                      <div>
-                        <span className="text-gray-500 dark:text-gray-400 block text-xs">Indexing latency</span>
-                        <div className="font-mono text-gray-900 dark:text-gray-100">
-                          {indexPerfMetrics.indexLatency >= 1000
-                            ? `${(indexPerfMetrics.indexLatency / 1000).toFixed(2)} s`
-                            : `${indexPerfMetrics.indexLatency.toFixed(2)} ms`}
-                        </div>
-                      </div>
-                      <div>
-                        <span className="text-gray-500 dark:text-gray-400 block text-xs">Search latency</span>
-                        <div className="font-mono text-gray-900 dark:text-gray-100">
-                          {indexPerfMetrics.searchLatency >= 1000
-                            ? `${(indexPerfMetrics.searchLatency / 1000).toFixed(2)} s`
-                            : `${indexPerfMetrics.searchLatency.toFixed(2)} ms`}
-                        </div>
-                      </div>
-                    </div>
-                  )}
-                  {!indexPerfLoading && !indexPerfError && !indexPerfMetrics && indexPerfInitialized && (
-                    <p className="text-xs text-gray-400 dark:text-gray-500">Loading...</p>
-                  )}
-                </div>
-                {/* Lifecycle */}
-                <div className="space-y-2">
-                  <h4 className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">Lifecycle</h4>
-                  {ilmExplain?.indices?.[selectedIndex] != null ? (
-                    <div className="space-y-2">
-                      <div><span className="text-gray-500 dark:text-gray-400 block text-xs">ILM policy</span><div className="font-mono truncate" title={ilmExplain.indices[selectedIndex]?.policy}>{ilmExplain.indices[selectedIndex]?.policy ?? '—'}</div></div>
-                      <div><span className="text-gray-500 dark:text-gray-400 block text-xs">Phase</span><div className="font-mono">{ilmExplain.indices[selectedIndex]?.phase ?? '—'}</div></div>
-                      <div><span className="text-gray-500 dark:text-gray-400 block text-xs">Action</span><div className="font-mono">{ilmExplain.indices[selectedIndex]?.action ?? '—'}</div></div>
-                      <div><span className="text-gray-500 dark:text-gray-400 block text-xs">Step</span><div className="font-mono">{ilmExplain.indices[selectedIndex]?.step?.name ?? '—'}</div></div>
-                    </div>
-                  ) : (
-                    <p className="text-gray-400 dark:text-gray-500 text-xs">—</p>
-                  )}
-                </div>
-                {/* Field usage */}
-                <div className="space-y-2">
-                  <h4 className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">Field usage</h4>
-                  {selectedIndex && fieldUsageAllMap[selectedIndex]?.hasUsageData ? (
-                    <div className="space-y-2">
-                      <div><span className="text-gray-500 dark:text-gray-400 block text-xs">Total fields</span><div className="font-mono">
-                        {fieldUsageAllMap[selectedIndex]?.totalFields != null && fieldUsageAllMap[selectedIndex].totalFields > 0 ? (
-                          <div className="text-sm font-medium text-gray-900 dark:text-gray-100">
-                            {fieldUsageAllMap[selectedIndex].totalFields}
-                          </div>
-                        ) : (
-                          '—'
-                        )}
-                      </div></div>
-                      <div><span className="text-gray-500 dark:text-gray-400 block text-xs">Used fields</span><div className="font-mono">
-                        {fieldUsageAllMap[selectedIndex]?.hasUsageData ? (
-                          <button
-                            type="button"
-                            onClick={() => selectedIndex && handleUsedFieldsClick(selectedIndex)}
-                            className="inline-flex items-center rounded border border-gray-300 bg-gray-50 px-2 py-0.5 text-sm font-medium text-gray-700 hover:bg-gray-100 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200 dark:hover:bg-gray-600"
-                            title="Click to see used fields"
-                          >
-                            {fieldUsageAllMap[selectedIndex].usedFields} field{fieldUsageAllMap[selectedIndex].usedFields !== 1 ? 's' : ''}
-                          </button>
-                        ) : (
-                          '—'
-                        )}
-                      </div></div>
-                      <div><span className="text-gray-500 dark:text-gray-400 block text-xs">Unsearched fields</span><div className="font-mono">
-                        {fieldUsageAllMap[selectedIndex]?.hasUsageData ? (
-                          <button
-                            type="button"
-                            onClick={() => selectedIndex && handleUnsearchedFieldsClick(selectedIndex)}
-                            className="inline-flex items-center rounded border border-gray-300 bg-gray-50 px-2 py-0.5 text-sm font-medium text-gray-700 hover:bg-gray-100 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200 dark:hover:bg-gray-600"
-                            title="Click to see field names"
-                          >
-                            {fieldUsageAllMap[selectedIndex].unusedFields} field{fieldUsageAllMap[selectedIndex].unusedFields !== 1 ? 's' : ''}
-                          </button>
-                        ) : (
-                          '—'
-                        )}
-                      </div></div>
-                    </div>
-                  ) : (
-                    <p className="text-gray-400 dark:text-gray-500 text-xs">—</p>
-                  )}
-                </div>
-              </div>
-              {/* Shard allocation */}
-              {indexShards && indexShards.length > 0 && (
-                <div>
-                  <h4 className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">Shard allocation</h4>
-                  <div className="mb-2 flex flex-wrap gap-2 text-[11px] text-gray-600 dark:text-gray-400">
-                    {(() => {
-                      const byNode: Record<string, { total: number; primaries: number; replicas: number; storeBytes: number }> = {};
-                      for (const s of indexShards) {
-                        const node = s.node ?? '—';
-                        if (!byNode[node]) byNode[node] = { total: 0, primaries: 0, replicas: 0, storeBytes: 0 };
-                        byNode[node].total += 1;
-                        if (s.prirep === 'p') byNode[node].primaries += 1;
-                        else if (s.prirep === 'r') byNode[node].replicas += 1;
-                        byNode[node].storeBytes += parseCatByteSizeToBytes(s.store);
-                      }
-                      const rows = Object.entries(byNode).sort((a, b) => b[1].storeBytes - a[1].storeBytes || b[1].total - a[1].total);
-                      return rows.slice(0, 6).map(([node, v]) => (
-                        <span
-                          key={node}
-                          className="inline-flex items-center gap-1 rounded border border-gray-200 bg-gray-50 px-2 py-1 dark:border-gray-600 dark:bg-gray-700/40"
-                          title={`Total shards: ${v.total} (p:${v.primaries}, r:${v.replicas})`}
-                        >
-                          <button
-                            type="button"
-                            onClick={() => {
-                              if (node !== '—') onOpenNodeDetails?.(node);
-                            }}
-                            disabled={node === '—'}
-                            className={`font-mono ${
-                              node === '—'
-                                ? 'text-gray-800 dark:text-gray-200 cursor-default'
-                                : 'text-blue-600 hover:underline dark:text-blue-400'
-                            }`}
-                            title={node === '—' ? 'Node unavailable' : `Open node details for ${node}`}
-                          >
-                            {node}
-                          </button>
-                          <span className="text-gray-500 dark:text-gray-400">·</span>
-                          <span>{v.total}</span>
-                          <span className="text-gray-500 dark:text-gray-400">shards</span>
-                        </span>
-                      ));
-                    })()}
-                  </div>
-                  <div className="rounded-lg border border-gray-200 dark:border-gray-600 overflow-hidden bg-gray-50/50 dark:bg-gray-800/50">
-                    <div className="overflow-x-auto max-h-40 overflow-y-auto">
-                      <table className="w-full text-xs border-collapse">
-                        <thead className="sticky top-0 bg-gray-100 dark:bg-gray-700/80 text-left">
-                          <tr>
-                            <th className="px-3 py-2 font-medium text-gray-600 dark:text-gray-300 w-16">Shard</th>
-                            <th className="px-3 py-2 font-medium text-gray-600 dark:text-gray-300 w-24">Type</th>
-                            <th className="px-3 py-2 font-medium text-gray-600 dark:text-gray-300 w-24">State</th>
-                            <th className="px-3 py-2 font-medium text-gray-600 dark:text-gray-300 min-w-0">Node</th>
-                            <th className="px-3 py-2 font-medium text-gray-600 dark:text-gray-300 w-28">IP</th>
-                            <th className="px-3 py-2 font-medium text-gray-600 dark:text-gray-300 w-24 text-right">Docs</th>
-                            <th className="px-3 py-2 font-medium text-gray-600 dark:text-gray-300 w-24 text-right">Store</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-gray-200 dark:divide-gray-600">
-                          {(indexShardsExpanded ? indexShards : indexShards.slice(0, SHARD_ALLOCATION_VISIBLE)).map((s, i) => (
-                            <tr key={i} className="bg-white dark:bg-gray-800/50 hover:bg-gray-50 dark:hover:bg-gray-700/30">
-                              <td className="px-3 py-2 font-mono tabular-nums text-gray-800 dark:text-gray-200">{s.shard}</td>
-                              <td className="px-3 py-2">
-                                <span className={`inline-flex px-1.5 py-0.5 rounded text-[10px] font-medium ${s.prirep === 'p' ? 'bg-blue-100 text-blue-800 dark:bg-blue-900/40 dark:text-blue-200' : 'bg-gray-200 text-gray-700 dark:bg-gray-600 dark:text-gray-300'}`}>
-                                  {s.prirep === 'p' ? 'Primary' : 'Replica'}
-                                </span>
-                              </td>
-                              <td className="px-3 py-2">
-                                <span className={`inline-flex px-1.5 py-0.5 rounded text-[10px] font-medium ${
-                                  s.state === 'STARTED' ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-200' :
-                                  s.state === 'UNASSIGNED' ? 'bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-200' :
-                                  s.state === 'INITIALIZING' ? 'bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200' :
-                                  s.state === 'RELOCATING' ? 'bg-sky-100 text-sky-800 dark:bg-sky-900/40 dark:text-sky-200' :
-                                  'bg-gray-100 text-gray-700 dark:bg-gray-600 dark:text-gray-300'
-                                }`}>
-                                  {s.state}
-                                </span>
-                              </td>
-                              <td className="px-3 py-2 font-mono text-gray-700 dark:text-gray-300 truncate max-w-[200px]" title={s.node ?? ''}>
-                                {s.node ? (
-                                  <button
-                                    type="button"
-                                    onClick={() => {
-                                      if (s.node && s.node !== '—') onOpenNodeDetails?.(s.node);
-                                    }}
-                                    className="font-mono text-blue-600 hover:underline dark:text-blue-400"
-                                    title={`Open node details for ${s.node}`}
-                                  >
-                                    {s.node}
-                                  </button>
-                                ) : (
-                                  '—'
-                                )}
-                              </td>
-                              <td className="px-3 py-2 font-mono text-gray-600 dark:text-gray-400 truncate" title={s.ip ?? ''}>
-                                {s.ip ?? '—'}
-                              </td>
-                              <td className="px-3 py-2 font-mono tabular-nums text-gray-700 dark:text-gray-300 text-right">
-                                {s.docs != null && String(s.docs).trim() !== '' ? Intl.NumberFormat('en-US').format(parseInt(String(s.docs), 10) || 0) : '—'}
-                              </td>
-                              <td className="px-3 py-2 font-mono tabular-nums text-gray-700 dark:text-gray-300 text-right">
-                                {s.store ?? '—'}
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
-                  {indexShards.length > SHARD_ALLOCATION_VISIBLE && (
-                    <button
-                      type="button"
-                      onClick={() => setIndexShardsExpanded((e) => !e)}
-                      className="mt-2 text-xs text-blue-600 dark:text-blue-400 hover:underline font-medium"
-                    >
-                      {indexShardsExpanded
-                        ? 'Show less'
-                        : `Show more (${indexShards.length - SHARD_ALLOCATION_VISIBLE} more shards)`}
-                    </button>
-                  )}
-                </div>
-              )}
-            </div>
-          )}
-          {!detailLoading && indexDetailTab === 'overview' && !overviewRow && (
-            <p className="text-sm text-gray-500">No overview data.</p>
-          )}
-          {indexDetailTab === 'mappings' && indexDetails?.[selectedIndex] && (
-            <div className="space-y-3">
-              {selectedIndexMappingSummary && (
-                <div className="rounded-lg border border-gray-200 dark:border-gray-700 p-3 bg-gray-50/60 dark:bg-gray-900/20">
-                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-2">
-                    <div className="rounded-md border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 px-2 py-1.5">
-                      <div className="text-[10px] uppercase tracking-wider text-gray-500 dark:text-gray-400">Total fields</div>
-                      <div className="text-sm font-semibold text-gray-900 dark:text-gray-100 tabular-nums">
-                        {Intl.NumberFormat('en-US').format(selectedIndexMappingSummary.totalFields)}
-                      </div>
-                    </div>
-                    <div className="rounded-md border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 px-2 py-1.5">
-                      <div className="text-[10px] uppercase tracking-wider text-gray-500 dark:text-gray-400">Field types</div>
-                      <div className="text-sm font-semibold text-gray-900 dark:text-gray-100 tabular-nums">
-                        {Intl.NumberFormat('en-US').format(selectedIndexMappingSummary.distinctTypeCount)}
-                      </div>
-                    </div>
-                    <div className="rounded-md border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 px-2 py-1.5">
-                      <div className="text-[10px] uppercase tracking-wider text-gray-500 dark:text-gray-400">Text fields</div>
-                      <div className="text-sm font-semibold text-gray-900 dark:text-gray-100 tabular-nums">
-                        {Intl.NumberFormat('en-US').format(selectedIndexMappingSummary.textFieldCount)}
-                      </div>
-                    </div>
-                    <div className="rounded-md border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 px-2 py-1.5">
-                      <div className="text-[10px] uppercase tracking-wider text-gray-500 dark:text-gray-400">Keyword fields</div>
-                      <div className="text-sm font-semibold text-gray-900 dark:text-gray-100 tabular-nums">
-                        {Intl.NumberFormat('en-US').format(selectedIndexMappingSummary.keywordFieldCount)}
-                      </div>
-                    </div>
-                    <div className="rounded-md border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 px-2 py-1.5">
-                      <div className="text-[10px] uppercase tracking-wider text-gray-500 dark:text-gray-400">Analyzers</div>
-                      <div className="text-sm font-semibold text-gray-900 dark:text-gray-100 tabular-nums">
-                        {Intl.NumberFormat('en-US').format(
-                          new Set([
-                            ...selectedIndexMappingSummary.definedAnalyzerNames,
-                            ...selectedIndexMappingSummary.analyzerNames
-                          ]).size
-                        )}
-                      </div>
-                    </div>
-                    <div className="rounded-md border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 px-2 py-1.5">
-                      <div className="text-[10px] uppercase tracking-wider text-gray-500 dark:text-gray-400">Search analyzers</div>
-                      <div className="text-sm font-semibold text-gray-900 dark:text-gray-100 tabular-nums">
-                        {Intl.NumberFormat('en-US').format(selectedIndexMappingSummary.searchAnalyzerNames.length)}
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="mt-3 grid grid-cols-1 lg:grid-cols-3 gap-3 text-xs">
-                    <div>
-                      <div className="text-[10px] uppercase tracking-wider text-gray-500 dark:text-gray-400 mb-1">Top field types</div>
-                      <div className="flex flex-wrap gap-1">
-                        {Object.entries(selectedIndexMappingSummary.typeCounts)
-                          .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
-                          .slice(0, 8)
-                          .map(([typeName, count]) => (
-                            <span
-                              key={typeName}
-                              className="inline-flex items-center rounded border border-gray-300 dark:border-gray-600 px-1.5 py-0.5 bg-white dark:bg-gray-800 font-mono"
-                            >
-                              {typeName}:{count}
-                            </span>
-                          ))}
-                        {Object.keys(selectedIndexMappingSummary.typeCounts).length === 0 && (
-                          <span className="text-gray-500 dark:text-gray-400">—</span>
-                        )}
-                      </div>
-                    </div>
-                    <div>
-                      <div className="text-[10px] uppercase tracking-wider text-gray-500 dark:text-gray-400 mb-1">Analyzers (field + defined)</div>
-                      <div className="flex flex-wrap gap-1">
-                        {Array.from(
-                          new Set([
-                            ...selectedIndexMappingSummary.definedAnalyzerNames,
-                            ...selectedIndexMappingSummary.analyzerNames
-                          ])
-                        )
-                          .sort((a, b) => a.localeCompare(b))
-                          .slice(0, 10)
-                          .map((name) => (
-                            <span
-                              key={name}
-                              className="inline-flex items-center rounded border border-blue-300 dark:border-blue-700 px-1.5 py-0.5 bg-blue-50 dark:bg-blue-900/20 font-mono text-blue-700 dark:text-blue-300"
-                            >
-                              {name}
-                            </span>
-                          ))}
-                        {selectedIndexMappingSummary.definedAnalyzerNames.length === 0 &&
-                          selectedIndexMappingSummary.analyzerNames.length === 0 && (
-                            <span className="text-gray-500 dark:text-gray-400">—</span>
-                          )}
-                      </div>
-                    </div>
-                    <div>
-                      <div className="text-[10px] uppercase tracking-wider text-gray-500 dark:text-gray-400 mb-1">Search analyzers</div>
-                      <div className="flex flex-wrap gap-1">
-                        {selectedIndexMappingSummary.searchAnalyzerNames.slice(0, 10).map((name) => (
-                          <span
-                            key={name}
-                            className="inline-flex items-center rounded border border-violet-300 dark:border-violet-700 px-1.5 py-0.5 bg-violet-50 dark:bg-violet-900/20 font-mono text-violet-700 dark:text-violet-300"
-                          >
-                            {name}
-                          </span>
-                        ))}
-                        {selectedIndexMappingSummary.searchAnalyzerNames.length === 0 && (
-                          <span className="text-gray-500 dark:text-gray-400">—</span>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              <CodeBlockWithCopy
-                text={JSON.stringify((indexDetails[selectedIndex] as { mappings?: unknown }).mappings ?? {}, null, 2)}
-                label="Mapping JSON"
-              />
-            </div>
-          )}
-          {indexDetailTab === 'mappings' && (!indexDetails || !indexDetails[selectedIndex]) && !detailLoading && (
-            <p className="text-sm text-gray-500">No mapping data.</p>
-          )}
-          {indexDetailTab === 'settings' && indexDetails?.[selectedIndex] && (
-            <CodeBlockWithCopy
-              text={JSON.stringify(
-                (indexDetails[selectedIndex] as { settings?: { index?: unknown } }).settings?.index ?? {},
-                null,
-                2
-              )}
-              label="Settings JSON"
-            />
-          )}
-          {indexDetailTab === 'settings' && (!indexDetails || !indexDetails[selectedIndex]) && !detailLoading && (
-            <p className="text-sm text-gray-500">No settings data.</p>
-          )}
-          {indexDetailTab === 'ilm' && (
-            <div className="text-sm">
-              {ilmForbidden && <p className="text-amber-600 dark:text-amber-400">Requires manage_ilm (or view_index_metadata).</p>}
-              {ilmUnavailable && !ilmForbidden && <p className="text-gray-500">ILM explain not available for this cluster or index (e.g. managed cloud or data stream backing index).</p>}
-              {!ilmForbidden && !ilmUnavailable && ilmExplain?.indices?.[selectedIndex] && (
-                <pre className="bg-gray-100 dark:bg-gray-700 rounded p-2 text-xs overflow-x-auto">
-                  {JSON.stringify(ilmExplain.indices[selectedIndex], null, 2)}
-                </pre>
-              )}
-              {!ilmForbidden && !ilmUnavailable && ilmExplain && !ilmExplain.indices?.[selectedIndex] && (
-                <p className="text-gray-500">No ILM or index not in explain result.</p>
-              )}
-            </div>
-          )}
-        </div>
-      </div>
-    </div>
+    [indexToAliases, fieldUsageAllMap, handleUsedFieldsClick, handleUnsearchedFieldsClick, onOpenIndexDetails, onOpenInQuery]
   );
 
   if (!activeCluster) {
-    if (modalOnly) return indexDetailModal;
     return (
       <div className="rounded-lg border border-gray-300 bg-white p-4 text-center text-sm text-gray-500 dark:bg-gray-800 dark:border-gray-600 dark:text-gray-400">
         No cluster selected.
@@ -3553,7 +2635,6 @@ export function IndicesTabContent({
   }
 
   if (forbidden || (error && catalog.length === 0 && indicesExpanded)) {
-    if (modalOnly) return indexDetailModal;
     return (
       <div className="rounded-lg border border-gray-200 bg-white dark:border-gray-600 dark:bg-gray-800/50 shadow-sm max-h-[85vh] min-h-0 flex flex-col overflow-hidden">
         <div className="p-4 text-sm text-gray-700 dark:text-gray-300 relative flex flex-col min-h-0 overflow-y-auto">
@@ -3600,109 +2681,6 @@ export function IndicesTabContent({
     );
   }
 
-  if (modalOnly) {
-    return (
-      <>
-        {indexDetailModal}
-        {fieldsPopoverIndex && (() => {
-          const summary = fieldUsageAllMap[fieldsPopoverIndex];
-          const fieldList = fieldsPopoverMode === 'used'
-            ? (summary?.fieldList ?? []).filter((f) => f.usage > 0)
-            : (summary?.fieldList ?? []);
-          return (
-            <FieldsPopoverContent
-              indexName={fieldsPopoverIndex}
-              summary={summary}
-              fieldList={fieldList}
-              mode={fieldsPopoverMode}
-              usageTypeInfoOpen={usageTypeInfoOpen}
-              setUsageTypeInfoOpen={setUsageTypeInfoOpen}
-              onClose={() => {
-                setUsageTypeInfoOpen(false);
-                setFieldsPopoverIndex(null);
-              }}
-            />
-          );
-        })()}
-        {unsearchedFieldsPopoverIndex && (() => {
-          const summary = fieldUsageAllMap[unsearchedFieldsPopoverIndex];
-          const unsearchedNames =
-            (summary?.unusedFieldNames?.length ? summary.unusedFieldNames : null) ??
-            (summary?.fieldList ?? []).filter((f) => f.usage === 0).map((f) => f.name).sort((a, b) => a.localeCompare(b));
-          return (
-            <div
-              className="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
-              onMouseDown={(e) => {
-                unsearchedBackdropMouseDownRef.current = e.target === e.currentTarget;
-              }}
-              onClick={(e) => {
-                if (e.target === e.currentTarget && unsearchedBackdropMouseDownRef.current) {
-                  setUnsearchedFieldsPopoverIndex(null);
-                }
-                unsearchedBackdropMouseDownRef.current = false;
-              }}
-              role="dialog"
-              aria-modal="true"
-              aria-labelledby="unsearched-fields-popover-title"
-            >
-              <div
-                className="max-h-[70vh] w-full max-w-2xl overflow-hidden rounded-lg border border-gray-200 bg-white shadow-xl dark:border-gray-600 dark:bg-gray-800"
-                onClick={(e) => e.stopPropagation()}
-              >
-                <div className="flex items-center justify-between border-b border-gray-200 px-4 py-3 dark:border-gray-600">
-                  <h3 id="unsearched-fields-popover-title" className="text-sm font-semibold text-gray-900 dark:text-gray-100 font-mono">
-                    Index: {unsearchedFieldsPopoverIndex}
-                  </h3>
-                  <button
-                    type="button"
-                    onClick={() => setUnsearchedFieldsPopoverIndex(null)}
-                    className="rounded p-1.5 text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-600"
-                    aria-label="Close"
-                  >
-                    <X className="h-4 w-4" />
-                  </button>
-                </div>
-                <div className="tab-section-scroll">
-                  {!summary?.hasUsageData ? (
-                    <p className="text-sm text-gray-500 dark:text-gray-400">Usage data not available for this index.</p>
-                  ) : unsearchedNames.length === 0 ? (
-                    <p className="text-sm text-gray-500 dark:text-gray-400">No unsearched fields.</p>
-                  ) : (
-                    <div className="overflow-x-auto rounded border border-gray-200 dark:border-gray-600">
-                      <table className="w-full min-w-[400px] text-left text-sm tab-content-value">
-                        <thead>
-                          <tr className="border-b border-gray-200 bg-gray-100 dark:border-gray-600 dark:bg-gray-700/50">
-                            <th className="min-w-[140px] px-3 py-2 font-semibold text-gray-900 dark:text-gray-100">Field</th>
-                            <th className="min-w-[90px] px-3 py-2 font-semibold text-gray-900 dark:text-gray-100">Usage</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {unsearchedNames.map((name, i) => (
-                            <tr
-                              key={name ?? i}
-                              className="border-b border-gray-100 text-gray-800 dark:border-gray-700 dark:text-gray-200 last:border-b-0"
-                            >
-                              <td className="max-w-[220px] px-3 py-2 font-mono" title={name}>
-                                <span className="block truncate">{name}</span>
-                              </td>
-                              <td className="px-3 py-2 whitespace-nowrap">
-                                <span className="text-amber-600 dark:text-amber-400">unsearched</span>
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  )}
-                </div>
-              </div>
-            </div>
-          );
-        })()}
-      </>
-    );
-  }
-
   return (
     <div className="flex flex-col gap-4">
       <IndexExplorerSection
@@ -3711,10 +2689,7 @@ export function IndicesTabContent({
         expanded={regexSearchExpanded}
         onToggleExpanded={() => setRegexSearchExpanded((prev) => !prev)}
         onRefreshStateChange={onRefreshStateChange}
-        onOpenIndexDetails={(indexName) => {
-          setSelectedIndex(indexName);
-          setIndexDetailTab('overview');
-        }}
+        onOpenIndexDetails={onOpenIndexDetails}
       />
 
       {/* Shards Map (cluster-wide shards placement) */}
@@ -3856,11 +2831,8 @@ export function IndicesTabContent({
                         >
                           <button
                             type="button"
-                            onClick={() => {
-                              setSelectedIndex(r.index);
-                              setIndexDetailTab('overview');
-                            }}
-                            className="text-left font-mono tab-content-value text-blue-600 dark:text-blue-400 hover:underline break-words"
+                            onClick={() => onOpenIndexDetails?.(r.index)}
+                            className="text-left font-mono tab-content-value entity-name-link break-words"
                           >
                             {r.index}
                           </button>
@@ -3890,7 +2862,7 @@ export function IndicesTabContent({
                                       key={n}
                                       type="button"
                                       onClick={() => onOpenNodeDetails?.(n)}
-                                      className="inline-flex shrink-0 rounded bg-gray-100 px-1.5 py-0.5 text-xs text-blue-700 hover:bg-gray-200 hover:underline dark:bg-gray-700/60 dark:text-blue-300 dark:hover:bg-gray-600 font-mono transition-colors"
+                                      className="inline-flex shrink-0 rounded bg-gray-100 px-1.5 py-0.5 text-xs text-blue-700 hover:bg-gray-200 hover:underline dark:bg-gray-700/60 dark:text-gray-100 dark:hover:bg-gray-600 font-mono transition-colors"
                                       title={`Open node details for ${n}`}
                                     >
                                       {n}
@@ -4088,11 +3060,8 @@ export function IndicesTabContent({
                           <div className="min-w-0 flex flex-col gap-0.5">
                             <button
                               type="button"
-                              onClick={() => {
-                                setSelectedIndex(r.index);
-                                setIndexDetailTab('overview');
-                              }}
-                              className="text-left font-mono break-all text-blue-600 hover:underline dark:text-blue-400"
+                              onClick={() => onOpenIndexDetails?.(r.index)}
+                              className="text-left font-mono break-all entity-name-link"
                             >
                               {r.index}
                             </button>
@@ -4765,11 +3734,8 @@ export function IndicesTabContent({
                           <td className="px-3 py-2 font-mono text-[11px] break-all whitespace-normal">
                             <button
                               type="button"
-                              onClick={() => {
-                                setSelectedIndex(row.index);
-                                setIndexDetailTab('overview');
-                              }}
-                              className="text-left font-mono text-[11px] break-all whitespace-normal text-blue-600 hover:underline dark:text-blue-400"
+                              onClick={() => onOpenIndexDetails?.(row.index)}
+                              className="text-left font-mono text-[11px] break-all whitespace-normal entity-name-link"
                             >
                               {row.index}
                             </button>
@@ -4814,8 +3780,6 @@ export function IndicesTabContent({
           </div>
         </div>
       )}
-
-      {indexDetailModal}
 
       {aliasesPopoverIndex && (() => {
         const aliases = indexToAliases[aliasesPopoverIndex] ?? [];

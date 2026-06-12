@@ -166,9 +166,12 @@ function buildDiskTooltip(allocation: CatAllocationRow | null): string | undefin
   return lines.join('\n');
 }
 
+import type { OpenIndexDetailsFn } from '@/types/indexDetail';
+
 interface NodesTabContentProps {
   onRefreshStateChange?: (loading: boolean) => void;
   onOpenNodeDetails?: (nodeName: string) => void;
+  onOpenIndexDetails?: OpenIndexDetailsFn;
   modalOnly?: boolean;
   externalOpenNode?: string | null;
   onExternalModalClose?: () => void;
@@ -177,6 +180,7 @@ interface NodesTabContentProps {
 export function NodesTabContent({
   onRefreshStateChange,
   onOpenNodeDetails,
+  onOpenIndexDetails,
   modalOnly = false,
   externalOpenNode = null,
   onExternalModalClose
@@ -624,7 +628,19 @@ export function NodesTabContent({
                       <div className="mt-1 space-y-0.5">
                         {placementSummary.topIndices.map((item) => (
                           <div key={item.index} className="font-mono break-all">
-                            - {item.index} ({item.shards})
+                            {onOpenIndexDetails ? (
+                              <button
+                                type="button"
+                                onClick={() => onOpenIndexDetails(item.index)}
+                                className="entity-name-link"
+                                title={`Open index details for ${item.index}`}
+                              >
+                                - {item.index}
+                              </button>
+                            ) : (
+                              <span>- {item.index}</span>
+                            )}{' '}
+                            ({item.shards})
                           </div>
                         ))}
                       </div>
@@ -847,7 +863,7 @@ export function NodesTabContent({
                     <button
                       type="button"
                       onClick={() => openNodeDetails(r.name ?? '')}
-                      className="text-left font-mono text-blue-600 hover:underline dark:text-blue-400"
+                      className="text-left font-mono entity-name-link"
                       title={r.name ? `Open node details for ${r.name}` : undefined}
                     >
                       {r.master === '*' ? '⭐ ' : ''}{r.name ?? '—'}
@@ -880,7 +896,7 @@ export function NodesTabContent({
                             <button
                               type="button"
                               onClick={() => setNodeAttrsPopover({ nodeName, attrs: meaningfulAttrs })}
-                              className="text-blue-600 dark:text-blue-400 hover:underline focus:outline-none focus:underline text-left mt-0.5"
+                              className="entity-name-link focus:outline-none focus:underline text-left mt-0.5"
                               title="Show all attributes"
                             >
                               +{restMeaningful.length} more

@@ -6,6 +6,7 @@ import type { CatShardRow } from '@/types/api';
 import { getCatShardsPlacement, getIndicesCatalog, getNetworkErrorMessage, getNodesStatsShardsAll } from '@/services/elasticsearch';
 import Pagination from '@/components/data/Pagination';
 import { InfoPopup } from '@/components/ui/InfoPopup';
+import { HealthDot } from '@/components/ui/HealthDot';
 import { formatAlertValue, formatDocumentCount, formatNumber } from '@/utils/format';
 import { hasSearchTerms, matchesParsedTermsInText, parseSearchTerms } from '@/utils/search';
 
@@ -693,7 +694,7 @@ export function ShardsTabContent({
               value={term}
               onChange={(e) => setTerm(e.target.value)}
               placeholder="Search index…"
-              className="w-full pl-6 pr-6 py-1 text-xs border border-gray-300 rounded-md bg-white dark:bg-gray-700 dark:border-gray-600 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 tab-content-value"
+              className="w-full rounded-md border border-gray-300 bg-white py-1.5 pl-6 pr-6 text-sm text-gray-900 placeholder-gray-400 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100"
             />
             {term && (
               <button
@@ -742,38 +743,30 @@ export function ShardsTabContent({
             {/* Use fixed, compact index columns (ElasticVue-style) to avoid big gaps on wide screens */}
             <div
               className="grid w-full"
-              style={{ gridTemplateColumns: `220px repeat(${indicesPage.length}, minmax(140px, 1fr))` }}
+              style={{ gridTemplateColumns: `260px repeat(${indicesPage.length}, minmax(168px, max-content))` }}
             >
               {/* Sticky header row */}
-              <div className="sticky top-0 z-20 bg-gray-50 dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 px-3 py-2 text-xs font-semibold text-gray-700 dark:text-gray-200">
+              <div className="sticky left-0 top-0 z-30 min-w-[260px] max-w-[260px] border-b border-r border-gray-200 bg-gray-50 px-3 py-2.5 text-sm font-semibold text-gray-700 shadow-[2px_0_4px_-2px_rgba(0,0,0,0.08)] dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200 dark:shadow-[2px_0_4px_-2px_rgba(0,0,0,0.35)]">
                 Nodes
-                <div className="text-[10px] font-normal text-gray-500 dark:text-gray-400 mt-0.5">
+                <div className="mt-0.5 text-sm font-normal text-gray-500 dark:text-gray-400">
                   {rows.length > 0 ? `${formatNumber(rows.length)} shards` : '—'}
                 </div>
               </div>
               {indicesPage.map((idx) => {
                 const health = indicesHealthByName[idx];
-                const healthDot =
-                  health === 'green'
-                    ? 'bg-emerald-500'
-                    : health === 'yellow'
-                      ? 'bg-amber-500'
-                      : health === 'red'
-                        ? 'bg-red-500'
-                        : 'bg-gray-400';
                 return (
                   <button
                     key={idx}
                     type="button"
                     onClick={() => onOpenIndexDetails?.(idx)}
-                    className="sticky top-0 z-20 bg-gray-50 dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 px-3 py-2 text-left hover:bg-gray-100 dark:hover:bg-gray-700/60 transition-colors"
+                    className="sticky top-0 z-20 bg-gray-50 dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 px-3 py-2.5 text-left hover:bg-gray-100 dark:hover:bg-gray-700/60 transition-colors"
                     title={idx}
                   >
-                    <div className="flex items-center gap-2 min-w-0">
-                      <span className={`h-2 w-2 rounded-full ${healthDot}`} aria-hidden />
-                      <span className="text-xs font-semibold text-gray-800 dark:text-gray-100 truncate">{idx}</span>
+                    <div className="flex min-w-0 items-center gap-2">
+                      <HealthDot health={health} size="md" />
+                      <span className="truncate text-sm font-semibold text-gray-800 dark:text-gray-100">{idx}</span>
                     </div>
-                    <div className="mt-0.5 text-[10px] text-gray-500 dark:text-gray-400">
+                    <div className="mt-1 text-sm text-gray-500 dark:text-gray-400">
                       {statsWarm ? (
                         <>
                           <div className="truncate">
@@ -794,7 +787,7 @@ export function ShardsTabContent({
                 <>
                   <div
                     key={`node-${nodeKey}`}
-                    className="sticky left-0 z-10 bg-white dark:bg-gray-800 border-b border-gray-100 dark:border-gray-700 px-3 py-2"
+                    className="sticky left-0 z-20 min-w-[260px] max-w-[260px] border-b border-r border-gray-100 bg-white px-3 py-2.5 shadow-[2px_0_4px_-2px_rgba(0,0,0,0.06)] dark:border-gray-700 dark:bg-gray-800 dark:shadow-[2px_0_4px_-2px_rgba(0,0,0,0.3)]"
                     title={nodeKey}
                   >
                     <button
@@ -803,16 +796,16 @@ export function ShardsTabContent({
                         if (nodeKey !== 'unassigned') onOpenNodeDetails?.(nodeKey);
                       }}
                       disabled={nodeKey === 'unassigned'}
-                      className={`text-xs font-medium truncate ${
+                      className={`truncate text-sm font-medium ${
                         nodeKey === 'unassigned'
                           ? 'text-gray-900 dark:text-gray-100 cursor-default'
-                          : 'text-blue-600 hover:underline dark:text-blue-400'
+                          : 'entity-name-link'
                       }`}
                       title={nodeKey === 'unassigned' ? 'No node assigned' : `Open node details for ${nodeKey}`}
                     >
                       {nodeKey}
                     </button>
-                    <div className="mt-0.5 text-[10px] text-gray-500 dark:text-gray-400">
+                    <div className="mt-1 text-sm text-gray-500 dark:text-gray-400">
                       {nodeKey === 'unassigned' ? (
                         'No node assigned'
                       ) : (
@@ -835,12 +828,12 @@ export function ShardsTabContent({
                     return (
                       <div
                         key={`${key}-cell`}
-                        className="border-b border-gray-100 dark:border-gray-700 px-2 py-2 min-h-[54px]"
+                        className="min-h-[72px] border-b border-gray-100 px-2.5 py-2.5 dark:border-gray-700"
                       >
                         {cellRows.length === 0 ? (
-                          <span className="text-[10px] text-gray-400 dark:text-gray-500">—</span>
+                          <span className="text-sm text-gray-400 dark:text-gray-500">—</span>
                         ) : (
-                          <div className="flex flex-wrap gap-1">
+                          <div className="flex flex-wrap gap-1.5">
                             {cellRows.map((r) => {
                               const k = shardKey(r);
                               const rk = rateKeyForRow(r);
@@ -869,7 +862,7 @@ export function ShardsTabContent({
 
                               const roleLabel = r.prirep === 'p' ? 'p' : 'r';
                               const label = `${roleLabel}${r.shard}`;
-                              const cls = `${badgeBase} ${state} ${isRelocating ? '' : intensityClass(rate)} px-1.5 py-0.5 rounded text-[10px] font-mono cursor-pointer transition-colors`;
+                              const cls = `${badgeBase} ${state} ${isRelocating ? '' : intensityClass(rate)} rounded-md px-2 py-1 text-sm font-mono font-medium cursor-pointer transition-colors`;
                               const title = isRelocating
                                 ? `${r.index} shard ${r.shard} (${r.prirep}) — relocating ${reloc.sourceNode} → ${reloc.targetNode}`
                                 : `${r.index} shard ${r.shard} (${r.prirep})`;
@@ -884,7 +877,7 @@ export function ShardsTabContent({
                                 >
                                   <span>{label}</span>
                                   {isRelocating ? (
-                                    <span className="ml-0.5 text-[9px] font-sans opacity-90">→{reloc.targetNode}</span>
+                                    <span className="ml-1 text-xs font-sans font-normal opacity-90">→{reloc.targetNode}</span>
                                   ) : null}
                                 </button>
                               );
@@ -949,7 +942,7 @@ export function ShardsTabContent({
                       const nodeKey = normalizeNodeKey(selectedShard.row.node);
                       if (nodeKey !== 'unassigned') onOpenNodeDetails?.(nodeKey);
                     }}
-                    className="font-mono text-blue-600 hover:underline dark:text-blue-400"
+                    className="font-mono entity-name-link"
                     title={selectedShard.row.node ? `Open node details for ${selectedShard.row.node}` : 'No node assigned'}
                   >
                     {normalizeNodeKey(selectedShard.row.node)}
@@ -957,9 +950,9 @@ export function ShardsTabContent({
                   <span className="font-mono">{selectedShard.row.ip ?? '—'}</span>
                 </div>
 
-                <div className="mt-3 grid grid-cols-2 gap-2 text-[11px]">
+                <div className="mt-3 grid grid-cols-2 gap-2 text-sm">
                   <div className="rounded-md bg-gray-50 p-2 dark:bg-gray-800/60">
-                    <div className="text-[10px] text-gray-500 dark:text-gray-400">Docs</div>
+                    <div className="text-xs text-gray-500 dark:text-gray-400">Docs</div>
                     <div className="font-medium text-gray-900 dark:text-gray-100">
                       {(() => {
                         const raw = selectedShard.row.docs;
@@ -970,22 +963,22 @@ export function ShardsTabContent({
                     </div>
                   </div>
                   <div className="rounded-md bg-gray-50 p-2 dark:bg-gray-800/60">
-                    <div className="text-[10px] text-gray-500 dark:text-gray-400">Store</div>
+                    <div className="text-xs text-gray-500 dark:text-gray-400">Store</div>
                     <div className="font-medium text-gray-900 dark:text-gray-100">{selectedShard.row.store ?? '—'}</div>
                   </div>
                   <div className="rounded-md bg-gray-50 p-2 dark:bg-gray-800/60">
-                    <div className="text-[10px] text-gray-500 dark:text-gray-400">State</div>
+                    <div className="text-xs text-gray-500 dark:text-gray-400">State</div>
                     <div className="font-medium text-gray-900 dark:text-gray-100">{selectedShard.row.state ?? '—'}</div>
                   </div>
                   <div className="rounded-md bg-gray-50 p-2 dark:bg-gray-800/60">
-                    <div className="text-[10px] text-gray-500 dark:text-gray-400">Unassigned reason</div>
+                    <div className="text-xs text-gray-500 dark:text-gray-400">Unassigned reason</div>
                     <div className="font-medium text-gray-900 dark:text-gray-100">{(selectedShard.row as any)['unassigned.reason'] ?? '—'}</div>
                   </div>
                 </div>
 
-                <div className="mt-3 grid grid-cols-2 gap-2 text-[11px]">
+                <div className="mt-3 grid grid-cols-2 gap-2 text-sm">
                   <div className="rounded-md border border-cyan-200 bg-cyan-50 p-2 dark:border-cyan-900/40 dark:bg-cyan-900/20">
-                    <div className="text-[10px] text-cyan-700 dark:text-cyan-200">Indexing</div>
+                    <div className="text-xs text-cyan-700 dark:text-cyan-200">Indexing</div>
                     <div className="mt-0.5 text-gray-900 dark:text-gray-100 space-y-0.5">
                       <div className="truncate">
                         <span className="text-gray-600 dark:text-gray-300">Indexing rate</span>{' '}
@@ -998,7 +991,7 @@ export function ShardsTabContent({
                     </div>
                   </div>
                   <div className="rounded-md border border-cyan-200 bg-cyan-50 p-2 dark:border-cyan-900/40 dark:bg-cyan-900/20">
-                    <div className="text-[10px] text-cyan-700 dark:text-cyan-200">Search</div>
+                    <div className="text-xs text-cyan-700 dark:text-cyan-200">Search</div>
                     <div className="mt-0.5 text-gray-900 dark:text-gray-100 space-y-0.5">
                       <div className="truncate">
                         <span className="text-gray-600 dark:text-gray-300">Search rate</span>{' '}

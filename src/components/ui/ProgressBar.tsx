@@ -29,7 +29,7 @@ export function ProgressBar({
   const pct = max > 0 ? Math.min(100, (value / max) * 100) : 0;
   const barColor =
     pct > 80 ? 'bg-red-500' : pct > 70 ? 'bg-amber-500' : 'bg-emerald-600 dark:bg-emerald-500';
-  const trackClass = variant === 'card' ? 'bg-white/25' : 'bg-gray-500/80';
+  const trackClass = variant === 'card' ? 'bg-slate-200 dark:bg-white/25' : 'bg-gray-500/80';
 
   if (compact) {
     return (

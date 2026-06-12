@@ -20,7 +20,7 @@ export const apiConfig = {
     // Performance monitoring endpoints (filter_path reduces response size)
     nodeStats: '/_nodes/stats/indices,os,jvm,fs?filter_path=nodes.*.name,nodes.*.host,nodes.*.ip,nodes.*.roles,nodes.*.indices.indexing.index_total,nodes.*.indices.indexing.index_time_in_millis,nodes.*.indices.search.query_total,nodes.*.indices.search.query_time_in_millis,nodes.*.os.cpu.percent,nodes.*.jvm.mem.heap_used_in_bytes,nodes.*.jvm.mem.heap_max_in_bytes,nodes.*.fs.total.total_in_bytes,nodes.*.fs.total.available_in_bytes',
     indexStats: '/_stats?filter_path=indices.*.primaries.indexing.index_total,indices.*.primaries.indexing.index_time_in_millis,indices.*.primaries.indexing.index_failed,indices.*.primaries.segments.count,indices.*.primaries.merges.current,indices.*.total.search.query_total,indices.*.total.search.query_time_in_millis,indices.*.primaries.store.size_in_bytes,indices.*.total.store.size_in_bytes',
-    indices: '/_cat/indices?v&format=json&h=index,pri,rep,pri.store.size,store.size,docs.count&s=index',
+    indices: '/_cat/indices?v&format=json&h=index,health,pri,rep,pri.store.size,store.size,docs.count&s=index',
 
     // Indices tab: catalog (health, status), aliases, data streams
     indicesCatalog: '/_cat/indices?v&format=json&h=index,health,pri,rep,docs.count,docs.deleted,store.size,pri.store.size,creation.date.string,indexing.index_failed&s=creation.date.string',

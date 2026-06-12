@@ -40,6 +40,7 @@ import type {
   SnapshotInfo
 } from '@/types/api';
 import type { ClusterConnection, CreateClusterInput } from '@/types/app';
+import { sanitizeClusterInput } from '@/utils/clusterBackup';
 import type { AlertInstance, AlertRule, AlertSettings, AlertStats } from '../types/alerts';
 import { getStoredValue, setStoredValue } from '@/utils/storage';
 import { formatAlertValue } from '@/utils/format';
@@ -80,6 +81,7 @@ type MonitoringContextValue = {
   activeCluster: ClusterConnection | null;
   setActiveCluster: (clusterLabel: string) => void;
   addCluster: (input: CreateClusterInput) => Promise<void>;
+  importClusters: (inputs: CreateClusterInput[]) => number;
   updateCluster: (clusterLabel: string, input: CreateClusterInput) => void;
   updateClusterUuid: (clusterLabel: string, cluster_uuid: string) => void;
   updateClusterName: (clusterLabel: string, cluster_name: string) => void;
@@ -878,7 +880,37 @@ export function MonitoringProvider({ children }: { children: ReactNode }) {
       throw error;
     }
   }, []);
-  
+
+  const importClusters = useCallback((inputs: CreateClusterInput[]) => {
+    const sanitized = inputs
+      .map(sanitizeClusterInput)
+      .filter((item): item is ClusterConnection => item != null);
+
+    if (sanitized.length === 0) {
+      toast.error('Import failed', { description: 'No valid cluster connections in backup.' });
+      return 0;
+    }
+
+    setClusters((prev) => {
+      const next = [...prev];
+      for (const cluster of sanitized) {
+        const index = next.findIndex((c) => c.label === cluster.label);
+        if (index >= 0) {
+          next[index] = { ...next[index], ...cluster };
+        } else {
+          next.push(cluster);
+        }
+      }
+      return next;
+    });
+    setActiveClusterLabel(sanitized[0].label);
+
+    toast.success('Clusters imported', {
+      description: `${sanitized.length} connection${sanitized.length !== 1 ? 's' : ''} added.`
+    });
+    return sanitized.length;
+  }, []);
+
   const updateCluster = useCallback((clusterLabel: string, input: CreateClusterInput) => {
     const sanitizedBaseUrlRaw = input.baseUrl.trim().replace(/\/$/, '');
     const sanitizedBaseUrl = /^https?:\/\//i.test(sanitizedBaseUrlRaw) ? sanitizedBaseUrlRaw : `http://${sanitizedBaseUrlRaw}`;
@@ -1000,6 +1032,7 @@ export function MonitoringProvider({ children }: { children: ReactNode }) {
         setRefreshing(false);
       },
       addCluster,
+      importClusters,
       updateCluster,
       updateClusterUuid,
       updateClusterName,
@@ -1062,6 +1095,7 @@ export function MonitoringProvider({ children }: { children: ReactNode }) {
     clusters,
     activeCluster,
     addCluster,
+    importClusters,
     updateCluster,
     deleteCluster,
     alerts,

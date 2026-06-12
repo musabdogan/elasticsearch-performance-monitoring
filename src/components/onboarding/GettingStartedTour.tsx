@@ -41,9 +41,9 @@ export function GettingStartedTour() {
   const prevClusterCountRef = useRef<number>(clusters.length);
 
   // Step indices (keep in sync with steps list)
-  const STEP_INDEX_ADD_CLUSTER = 1;
-  const STEP_INDEX_CLUSTER_ADD_BUTTON = 2;
-  const STEP_INDEX_CLUSTER_FORM = 3;
+  const STEP_INDEX_ADD_CLUSTER = 0;
+  const STEP_INDEX_CLUSTER_ADD_BUTTON = 1;
+  const STEP_INDEX_CLUSTER_FORM = 2;
 
   const waitForSelector = (selector: string, timeoutMs = 4000): Promise<void> => {
     return new Promise((resolve, reject) => {
@@ -73,16 +73,6 @@ export function GettingStartedTour() {
   const steps = useMemo<Step[]>(
     () => [
       {
-        target: '[data-tour="monitoring-user-content"]',
-        title: 'Optional: create a monitoring user',
-        content: 'It’s recommended to create a dedicated monitoring user (instead of using a superuser). Use these ready-to-copy snippets to create a dedicated user for monitoring.',
-        placement: 'left',
-        skipBeacon: true,
-        buttons: ['skip', 'primary'],
-        showProgress: true,
-        locale: STEP_LOCALE
-      },
-      {
         target: '[data-tour="add-cluster"]',
         title: 'Add your first cluster',
         content: 'Click here to open the cluster setup.',
@@ -90,7 +80,6 @@ export function GettingStartedTour() {
         skipBeacon: true,
         // No Next here: clicking the button advances automatically.
         buttons: ['skip', 'back'],
-        showProgress: true,
         locale: STEP_LOCALE
       },
       {
@@ -100,7 +89,6 @@ export function GettingStartedTour() {
         placement: 'bottom',
         skipBeacon: true,
         buttons: ['skip', 'back', 'primary'],
-        showProgress: true,
         locale: STEP_LOCALE,
         before: async () => {
           window.dispatchEvent(new CustomEvent('openClusterSelector'));
@@ -115,7 +103,6 @@ export function GettingStartedTour() {
         skipBeacon: true,
         // No Next here: clicking "Add Cluster" advances the tour.
         buttons: ['skip', 'back'],
-        showProgress: true,
         locale: STEP_LOCALE,
         before: async () => {
           window.dispatchEvent(new CustomEvent('openClusterSelector'));
@@ -129,7 +116,6 @@ export function GettingStartedTour() {
         placement: 'bottom',
         skipBeacon: true,
         buttons: ['skip', 'back', 'primary'],
-        showProgress: true,
         locale: STEP_LOCALE
       },
       {
@@ -139,7 +125,6 @@ export function GettingStartedTour() {
         placement: 'bottom',
         skipBeacon: true,
         buttons: ['skip', 'back', 'primary'],
-        showProgress: true,
         locale: STEP_LOCALE
       },
       {
@@ -149,7 +134,6 @@ export function GettingStartedTour() {
         placement: 'bottom',
         skipBeacon: true,
         buttons: ['skip', 'back', 'primary'],
-        showProgress: true,
         locale: STEP_LOCALE
       },
       {
@@ -161,7 +145,6 @@ export function GettingStartedTour() {
         skipBeacon: true,
         // Final step: show only a single completion action.
         buttons: ['primary'],
-        showProgress: false,
         locale: {
           ...STEP_LOCALE,
           last: 'Completed'

@@ -103,6 +103,8 @@ export interface NodePerformanceStats {
 
 export interface IndexInfo {
   index: string;
+  /** green | yellow | red from _cat/indices */
+  health?: string;
   pri: string; // Primary shards
   rep: string; // Replica shards
   'pri.store.size': string; // Primary store size

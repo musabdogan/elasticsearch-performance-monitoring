@@ -10,20 +10,20 @@ import { RefreshCw, Search, X, Copy, Check, ChevronDown, ChevronRight } from 'lu
 import { hasSearchTerms, matchesParsedTermsInAnyText, parseSearchTerms } from '@/utils/search';
 
 const MONITOR_SNAPSHOT_MESSAGE =
-  'To view snapshots, use the built-in snapshot_user role for your monitoring user.';
+  'To view snapshots, assign the built-in snapshot_user role to your Elasticsearch user.';
 
-const SNAPSHOT_KIBANA_SNIPPET = `POST _security/user/searchali_monitoring_user
+const SNAPSHOT_KIBANA_SNIPPET = `POST _security/user/your_user
 {
-  "password": "searchali_monitoring_password",
-  "roles": ["remote_monitoring_collector", "snapshot_user"]
+  "password": "your_password",
+  "roles": ["snapshot_user"]
 }`;
 
 function getSnapshotCurlSnippet(baseUrl: string) {
   const base = baseUrl.replace(/\/$/, '');
-  return `curl -u elastic:YOUR_ELASTIC_PASSWORD -X POST "${base}/_security/user/searchali_monitoring_user" -H "Content-Type: application/json" -d'
+  return `curl -u elastic:YOUR_ELASTIC_PASSWORD -X POST "${base}/_security/user/your_user" -H "Content-Type: application/json" -d'
 {
-  "password": "searchali_monitoring_password",
-  "roles": ["remote_monitoring_collector", "snapshot_user"]
+  "password": "your_password",
+  "roles": ["snapshot_user"]
 }'`;
 }
 
@@ -856,7 +856,7 @@ export function SnapshotsTabContent(
                   <div className="min-w-0">
                     <p className="text-xs font-medium text-gray-900 dark:text-gray-100 mb-1.5">Description</p>
                     <p className="text-xs text-gray-600 dark:text-gray-400">
-                      To view snapshots, you can use the built-in <code className="bg-gray-200 dark:bg-gray-600 px-1 rounded font-mono text-gray-800 dark:text-gray-200">snapshot_user</code> role for your monitoring user.
+                      To view snapshots, assign the built-in <code className="bg-gray-200 dark:bg-gray-600 px-1 rounded font-mono text-gray-800 dark:text-gray-200">snapshot_user</code> role to your Elasticsearch user.
                     </p>
                     <a
                       href="https://www.elastic.co/docs/reference/elasticsearch/roles"
@@ -989,7 +989,7 @@ export function SnapshotsTabContent(
                             <button
                               type="button"
                               onClick={() => openSnapshotDetail(r)}
-                              className="w-fit font-mono tab-content-value text-left text-blue-700 hover:text-blue-800 hover:underline dark:text-blue-400 dark:hover:text-blue-300"
+                              className="w-fit font-mono tab-content-value text-left entity-name-link"
                               title={`Show status details for ${r.id}`}
                             >
                               {r.id}
@@ -1263,7 +1263,7 @@ export function SnapshotsTabContent(
                                 <button
                                   type="button"
                                   onClick={() => onOpenNodeDetails(String(f.node_id))}
-                                  className="text-blue-600 hover:underline dark:text-blue-400"
+                                  className="entity-name-link"
                                   title={`Open node details for ${String(f.node_id)}`}
                                 >
                                   {String(f.node_id)}
@@ -1534,7 +1534,7 @@ export function SnapshotsTabContent(
                                           onClick={() => {
                                             onOpenIndexDetails(row.index);
                                           }}
-                                          className="text-left text-blue-700 hover:text-blue-800 hover:underline dark:text-blue-400 dark:hover:text-blue-300"
+                                          className="text-left entity-name-link"
                                           title={`Open index details for ${row.index}`}
                                         >
                                           {row.index}

@@ -339,7 +339,7 @@ export function TemplatesTabContent({ onRefreshStateChange }: { onRefreshStateCh
               body: row.index_template ?? {}
             })
           }
-          className="text-left font-mono tab-content-value text-blue-600 dark:text-blue-400 hover:underline"
+          className="text-left font-mono tab-content-value entity-name-link"
         >
           {row.name}
         </button>
@@ -405,7 +405,7 @@ export function TemplatesTabContent({ onRefreshStateChange }: { onRefreshStateCh
               }
             })
           }
-          className="text-left font-mono tab-content-value text-blue-600 dark:text-blue-400 hover:underline"
+          className="text-left font-mono tab-content-value entity-name-link"
         >
           {row.name}
         </button>

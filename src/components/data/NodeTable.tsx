@@ -361,7 +361,7 @@ const NodeTable = memo<NodeTableProps>(({ nodeStats, nodes = [], loading = false
                   onClick={() => onOpenNodeDetails?.(node.name)}
                   className={`text-left font-mono ${
                     onOpenNodeDetails
-                      ? 'text-blue-600 hover:underline dark:text-blue-400'
+                      ? 'entity-name-link'
                       : 'text-gray-900 dark:text-gray-100'
                   }`}
                   title={onOpenNodeDetails ? `Open node details for ${node.name}` : node.name}

@@ -178,7 +178,7 @@ const AlertDetailModal = memo<AlertDetailModalProps>(({ alert, onClose }) => {
               <h4 className="font-medium text-sm text-gray-900 dark:text-gray-100 mb-2">Recommendations</h4>
               <ul className="text-sm text-gray-600 dark:text-gray-300 space-y-1.5 list-disc list-inside">
                 {recommendations.map((rec, i) => {
-                  const isCopyableCommand = /^(GET|POST|PUT|DELETE)\s+/i.test(rec.trim()) || rec.includes('\n');
+                  const isCopyableCommand = /^(GET|POST|PUT|DELETE)\s+/i.test(rec.trim()) || /\r?\n/.test(rec);
                   return (
                     <li key={i} className={isCopyableCommand ? 'list-none -ml-4 mt-2' : 'leading-relaxed'}>
                       {isCopyableCommand ? (

@@ -52,21 +52,6 @@ const API_KEY_KIBANA_SNIPPET = `POST _security/api_key
   }
 }`;
 
-const MONITORING_USER_KIBANA_SNIPPET = `POST _security/user/searchali_monitoring_user
-{
-  "password": "searchali_monitoring_password",
-  "roles": ["remote_monitoring_collector", "snapshot_user"]
-}`;
-
-function getMonitoringUserCurlSnippet(baseUrl: string) {
-  const base = baseUrl.replace(/\/$/, '');
-  return `curl -u elastic:YOUR_ELASTIC_PASSWORD -X POST "${base}/_security/user/searchali_monitoring_user" -H "Content-Type: application/json" -d'
-{
-  "password": "searchali_monitoring_password",
-  "roles": ["remote_monitoring_collector", "snapshot_user"]
-}'`;
-}
-
 function ApiKeyCodeBlock({ text, label }: { text: string; label: string }) {
   const [copied, setCopied] = useState(false);
   const onCopy = async () => {
@@ -144,7 +129,6 @@ export function ClusterSelector() {
   const [categoryFilter, setCategoryFilter] = useState<ClusterCategory | null>(null);
   const [openReorderForLabel, setOpenReorderForLabel] = useState<string | null>(null);
   const [apiKeyInfoOpen, setApiKeyInfoOpen] = useState(false);
-  const [basicAuthInfoOpen, setBasicAuthInfoOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const onboardingTourRunRef = useRef(false);
 
@@ -156,11 +140,6 @@ export function ClusterSelector() {
     window.addEventListener('onboardingTourRunChanged', onRunChanged as EventListener);
     return () => window.removeEventListener('onboardingTourRunChanged', onRunChanged as EventListener);
   }, []);
-
-  const monitoringUserCurlSnippet = useMemo(() => {
-    const baseUrl = (form.baseUrl?.trim() || 'https://localhost:9200').replace(/\/$/, '');
-    return getMonitoringUserCurlSnippet(baseUrl);
-  }, [form.baseUrl]);
 
   const apiKeyCurlSnippet = useMemo(() => {
     const baseUrl = (form.baseUrl?.trim() || 'https://localhost:9200').replace(/\/$/, '');
@@ -228,7 +207,6 @@ export function ClusterSelector() {
     setShowPassword(false);
     setShowApiKey(false);
     setApiKeyInfoOpen(false);
-    setBasicAuthInfoOpen(false);
     setCopiedCluster(null);
     setTestConnectionResult(null);
     setStatusFilter(null);
@@ -378,7 +356,6 @@ export function ClusterSelector() {
       setShowPassword(false);
       setShowApiKey(false);
       setApiKeyInfoOpen(false);
-      setBasicAuthInfoOpen(false);
       setTestConnectionResult(null);
     }
   };
@@ -483,14 +460,14 @@ export function ClusterSelector() {
   return (
     <div className={`relative ${showDropdown ? 'z-[100]' : ''}`} ref={dropdownRef}>
       <div className="flex items-center gap-2">
-        <div className="flex items-center gap-1 text-xs text-gray-700 dark:text-gray-300">
-          <Server className="h-3 w-3" />
-          <span className="font-medium">Clusters:</span>
+        <div className="flex items-center gap-1.5 text-sm font-medium text-gray-700 dark:text-gray-300">
+          <Server className="h-4 w-4 shrink-0" />
+          <span>Clusters:</span>
         </div>
         <button
           type="button"
           onClick={toggleDropdown}
-          className={`flex items-center gap-1 rounded-lg border px-2 py-1 text-xs shadow-sm transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 dark:focus:ring-offset-gray-900 ${
+          className={`flex items-center gap-1.5 rounded-lg border px-3 py-2 text-sm font-medium shadow-sm transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 dark:focus:ring-offset-gray-900 ${
             showDropdown
               ? 'border-blue-500 bg-blue-50 text-blue-700 dark:border-blue-400 dark:bg-blue-900/20 dark:text-blue-300'
               : 'border-gray-300 bg-white text-gray-900 hover:bg-gray-100 hover:shadow dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 dark:hover:bg-gray-600'
@@ -499,7 +476,7 @@ export function ClusterSelector() {
           <span className="max-w-[120px] truncate">
             {activeCluster?.label || 'Select cluster'}
           </span>
-          <ChevronDown className={`h-3 w-3 transition-transform duration-200 ${showDropdown ? 'rotate-180' : ''}`} />
+          <ChevronDown className={`h-4 w-4 shrink-0 transition-transform duration-200 ${showDropdown ? 'rotate-180' : ''}`} />
         </button>
       </div>
 
@@ -983,49 +960,8 @@ export function ClusterSelector() {
                           </div>
                         </div>
                       </div>
-                      <p className="mt-1 text-[11px] text-gray-500 dark:text-gray-400 flex items-center gap-1">
-                        Use elastic or a dedicated monitoring user. Best practice: create a user with limited roles.
-                        <InfoPopup
-                          title="Create monitoring user"
-                          modalTitle="Create monitoring user"
-                          open={basicAuthInfoOpen}
-                          onOpen={() => setBasicAuthInfoOpen(true)}
-                          onClose={() => setBasicAuthInfoOpen(false)}
-                          buttonClassName="inline-flex p-0.5 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
-                          placement="right"
-                        >
-                          <div className="space-y-3">
-                            <p className="text-gray-600 dark:text-gray-400">
-                              To maintain a secure cluster, create a dedicated user for health checks and metric collection rather than using a superuser account.
-                            </p>
-                            <div>
-                              <p className="font-medium text-gray-700 dark:text-gray-200 mb-1">Recommended roles</p>
-                              <ul className="text-[11px] text-gray-500 dark:text-gray-400 mb-2 list-disc list-inside space-y-0.5">
-                                <li><code className="bg-gray-100 dark:bg-gray-700 px-1 rounded">remote_monitoring_collector</code> — cluster health, node stats, index metrics</li>
-                                <li><code className="bg-gray-100 dark:bg-gray-700 px-1 rounded">snapshot_user</code> — snapshot repositories and snapshot list (optional)</li>
-                              </ul>
-                            </div>
-                            <div>
-                              <p className="font-medium text-gray-700 dark:text-gray-200 mb-1">Kibana Dev Tools (Console)</p>
-                              <ApiKeyCodeBlock text={MONITORING_USER_KIBANA_SNIPPET} label="Kibana snippet" />
-                            </div>
-                            <div>
-                              <p className="font-medium text-gray-700 dark:text-gray-200 mb-1">Terminal (cURL)</p>
-                              <ApiKeyCodeBlock text={monitoringUserCurlSnippet} label="curl command" />
-                            </div>
-                            <div className="rounded-md bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 px-3 py-2">
-                              <p className="font-medium text-amber-800 dark:text-amber-200 text-[11px] mb-1">
-                                Use for Username and Password above
-                              </p>
-                              <p className="text-amber-700 dark:text-amber-300 text-[11px]">
-                                Example username: <code className="bg-amber-100 dark:bg-amber-900/40 px-1 rounded font-mono">searchali_monitoring_user</code>
-                              </p>
-                              <p className="text-amber-700 dark:text-amber-300 text-[11px] mt-0.5">
-                                Example password: <code className="bg-amber-100 dark:bg-amber-900/40 px-1 rounded font-mono">searchali_monitoring_password</code>
-                              </p>
-                            </div>
-                          </div>
-                        </InfoPopup>
+                      <p className="mt-1 text-[11px] text-gray-500 dark:text-gray-400">
+                        Use an Elasticsearch user with the privileges required for this dashboard (for example <code className="bg-gray-100 dark:bg-gray-700 px-1 rounded font-mono">elastic</code> or a dedicated read-only account).
                       </p>
                     </div>
                   )}

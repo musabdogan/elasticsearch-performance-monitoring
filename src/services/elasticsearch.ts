@@ -286,6 +286,7 @@ export async function getIndices(cluster: ClusterConnection, signal?: AbortSigna
   const data = await request<
     Array<{
       index: string;
+      health?: string;
       pri: string;
       rep: string;
       'pri.store.size': string;
@@ -296,6 +297,7 @@ export async function getIndices(cluster: ClusterConnection, signal?: AbortSigna
 
   return data.map((row) => ({
     index: row.index,
+    health: row.health?.toLowerCase(),
     pri: row.pri,
     rep: row.rep,
     'pri.store.size': row['pri.store.size'],
@@ -746,6 +748,24 @@ export async function getIndicesCatalog(
 ): Promise<CatIndexRow[]> {
   const data = await request<CatIndexRow[]>('indicesCatalog', cluster, signal);
   return Array.isArray(data) ? data : [];
+}
+
+/** _cat/indices/{index} — single index row (docs.deleted, store sizes, etc.). */
+export async function getCatIndexRow(
+  cluster: ClusterConnection,
+  index: string,
+  signal?: AbortSignal | null
+): Promise<CatIndexRow | null> {
+  const base = cluster.baseUrl.replace(/\/$/, '');
+  const h =
+    'index,health,pri,rep,docs.count,docs.deleted,store.size,pri.store.size,creation.date.string';
+  const url = `${base}/_cat/indices/${encodeURIComponent(index)}?format=json&h=${h}`;
+  const headers = buildHeaders(cluster);
+  const response = await fetchWithTimeoutAndRetry(url, headers, signal, {}, cluster);
+  if (response.status === 404) return null;
+  if (!response.ok) throw new Error(`Cat index ${response.status} ${response.statusText}`);
+  const data = (await response.json()) as CatIndexRow[];
+  return Array.isArray(data) && data.length > 0 ? data[0] : null;
 }
 
 /** _cat/aliases. */
