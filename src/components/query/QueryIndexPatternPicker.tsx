@@ -14,6 +14,7 @@ type QueryIndexPatternPickerProps = {
   value: string;
   onChange: (value: string) => void;
   options: QueryPatternOption[];
+  onOpenChange?: (open: boolean) => void;
 };
 
 const SECTION_ORDER: QueryPatternOptionKind[] = ['pattern', 'index', 'data_stream'];
@@ -24,7 +25,7 @@ const SECTION_LABELS: Record<QueryPatternOptionKind, string> = {
   data_stream: 'Data streams'
 };
 
-export function QueryIndexPatternPicker({ value, onChange, options }: QueryIndexPatternPickerProps) {
+export function QueryIndexPatternPicker({ value, onChange, options, onOpenChange }: QueryIndexPatternPickerProps) {
   const rootRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const [open, setOpen] = useState(false);
@@ -40,10 +41,20 @@ export function QueryIndexPatternPicker({ value, onChange, options }: QueryIndex
 
   const commitDraft = () => {
     const next = normalizeQueryIndexPattern(draftRef.current);
-    onChange(next);
+    const current = normalizeQueryIndexPattern(value);
     setDraft(next);
     setFilter('');
+    if (next === current) return;
+    onChange(next);
   };
+
+  const onOpenChangeRef = useRef(onOpenChange);
+  onOpenChangeRef.current = onOpenChange;
+
+  useEffect(() => {
+    if (!open) return;
+    onOpenChangeRef.current?.(true);
+  }, [open]);
 
   useEffect(() => {
     if (!open) return;
@@ -73,10 +84,12 @@ export function QueryIndexPatternPicker({ value, onChange, options }: QueryIndex
   }, [filter, options]);
 
   const pick = (next: string) => {
-    onChange(next);
-    setDraft(next);
+    const normalized = normalizeQueryIndexPattern(next);
+    setDraft(normalized);
     setFilter('');
     setOpen(false);
+    if (normalized === normalizeQueryIndexPattern(value)) return;
+    onChange(normalized);
   };
 
   return (

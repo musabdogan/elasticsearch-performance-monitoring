@@ -1,3 +1,10 @@
+/**
+ * Elasticsearch HTTP client.
+ *
+ * CRITICAL: Every cluster HTTP call MUST go through `fetchWithTimeoutAndRetry`
+ * (timeout + max retries) and `runClusterGovernedFetch` (concurrency + dedupe/cooldown).
+ * Never call `fetch()` directly against a cluster from components or hooks.
+ */
 import { apiConfig, apiHeaders } from '@/config/api';
 import type {
   AllocationExplainResponse,
@@ -74,7 +81,26 @@ export function getNetworkErrorMessage(clusterBaseUrl: string): string {
   return `Network error, cannot access your cluster. Cluster uri: ${uri}`;
 }
 
-type FetchOptions = { method?: 'GET' | 'POST'; body?: string; timeoutMs?: number };
+type FetchOptions = { method?: 'GET' | 'POST' | 'PUT' | 'DELETE'; body?: string; timeoutMs?: number };
+
+function clusterUrl(cluster: ClusterConnection, path: string): string {
+  const base = cluster.baseUrl.replace(/\/$/, '');
+  return path.startsWith('/') ? `${base}${path}` : `${base}/${path}`;
+}
+
+/**
+ * Single entry for all cluster HTTP (GET/POST/…): timeout, retry, governor.
+ * Do not call `fetch()` or `fetchWithTimeoutAndRetry` from outside this file.
+ */
+async function clusterRequest(
+  cluster: ClusterConnection,
+  path: string,
+  options: FetchOptions & { signal?: AbortSignal | null } = {}
+): Promise<Response> {
+  const url = clusterUrl(cluster, path);
+  const headers = buildHeaders(cluster);
+  return fetchWithTimeoutAndRetry(url, headers, cluster, options.signal, options);
+}
 
 /**
  * Global fetch with timeout and retry on timeout only.
@@ -86,9 +112,9 @@ type FetchOptions = { method?: 'GET' | 'POST'; body?: string; timeoutMs?: number
 async function fetchWithTimeoutAndRetry(
   url: string,
   headers: HeadersInit,
+  cluster: ClusterConnection,
   externalSignal?: AbortSignal | null,
-  options: FetchOptions = {},
-  cluster?: ClusterConnection
+  options: FetchOptions = {}
 ): Promise<Response> {
   const { method = 'GET', body } = options;
   const timeoutMs = options.timeoutMs ?? apiConfig.requestTimeoutMs;
@@ -144,9 +170,6 @@ async function fetchWithTimeoutAndRetry(
     throw new Error(REQUEST_TIMED_OUT_MESSAGE);
   };
 
-  if (!cluster) {
-    return run();
-  }
   const clusterKey = clusterKeyFromBaseUrl(cluster.baseUrl);
   return runClusterGovernedFetch(clusterKey, url, method, run, externalSignal);
 }
@@ -160,11 +183,7 @@ async function request<T>(
   cluster: ClusterConnection,
   abortSignal?: AbortSignal | null
 ): Promise<T> {
-  const path = apiConfig.endpoints[endpoint];
-  const url = `${cluster.baseUrl.replace(/\/$/, '')}${path}`;
-  const headers = buildHeaders(cluster);
-
-  const response = await fetchWithTimeoutAndRetry(url, headers, abortSignal, {}, cluster);
+  const response = await clusterRequest(cluster, apiConfig.endpoints[endpoint], { signal: abortSignal });
 
   if (!response.ok) {
     throw new Error(`Elasticsearch ${response.status} ${response.statusText}`);
@@ -212,9 +231,9 @@ export async function checkClusterHealth(
     const response = await fetchWithTimeoutAndRetry(
       url,
       headers,
+      cluster,
       null,
-      { timeoutMs: apiConfig.healthCheckTimeoutMs },
-      cluster
+      { timeoutMs: apiConfig.healthCheckTimeoutMs }
     );
 
     if (response.ok) {
@@ -325,7 +344,7 @@ export async function getIndexStatsForIndex(
     'filter_path=indices.*.primaries.indexing.index_total,indices.*.primaries.indexing.index_time_in_millis,indices.*.total.search.query_total,indices.*.total.search.query_time_in_millis&metric=indexing,search';
   const url = `${base}${path}?${filter}`;
   const headers = buildHeaders(cluster);
-  const response = await fetchWithTimeoutAndRetry(url, headers, signal, {}, cluster);
+  const response = await fetchWithTimeoutAndRetry(url, headers, cluster, signal, {});
   if (response.status === 404) return null;
   if (!response.ok) throw new Error(`Index stats ${response.status} ${response.statusText}`);
   return (await response.json()) as SingleIndexStatsResponse;
@@ -346,7 +365,7 @@ export async function getIndexShardStatsForIndex(
     'level=shards&metric=indexing,search&filter_path=indices.*.shards.*.*.routing,indices.*.shards.*.*.indexing,indices.*.shards.*.*.search';
   const url = `${base}${path}?${filter}`;
   const headers = buildHeaders(cluster);
-  const response = await fetchWithTimeoutAndRetry(url, headers, signal, {}, cluster);
+  const response = await fetchWithTimeoutAndRetry(url, headers, cluster, signal, {});
   if (response.status === 404) return null;
   if (!response.ok) throw new Error(`Index shard stats ${response.status} ${response.statusText}`);
   return (await response.json()) as unknown;
@@ -381,7 +400,7 @@ export async function getNodesStatsShardsAll(
   });
   const url = `${base}${path}?${qs.toString()}`;
   const headers = buildHeaders(cluster);
-  const response = await fetchWithTimeoutAndRetry(url, headers, signal, {}, cluster);
+  const response = await fetchWithTimeoutAndRetry(url, headers, cluster, signal, {});
   if (response.status === 400 || response.status === 404) return null;
   if (!response.ok) throw new Error(`Nodes stats shards ${response.status} ${response.statusText}`);
   return (await response.json()) as unknown;
@@ -408,7 +427,7 @@ export async function getCatShardsPlacement(
   const base = cluster.baseUrl.replace(/\/$/, '');
   const url = `${base}/_cat/shards?v&format=json&h=index,shard,prirep,state,docs,store,ip,node,unassigned.for,unassigned.details&s=store:desc`;
   const headers = buildHeaders(cluster);
-  const response = await fetchWithTimeoutAndRetry(url, headers, signal, {}, cluster);
+  const response = await fetchWithTimeoutAndRetry(url, headers, cluster, signal, {});
   if (!response.ok) throw new Error(`Cat shards ${response.status} ${response.statusText}`);
   const data = await response.json();
   return Array.isArray(data) ? data : [];
@@ -423,7 +442,7 @@ export async function getCatShardsForIndex(
   const base = cluster.baseUrl.replace(/\/$/, '');
   const url = `${base}/_cat/shards/${encodeURIComponent(index)}?v&format=json&h=index,shard,prirep,state,docs,store,ip,node&s=store:desc,shard,prirep`;
   const headers = buildHeaders(cluster);
-  const response = await fetchWithTimeoutAndRetry(url, headers, signal, {}, cluster);
+  const response = await fetchWithTimeoutAndRetry(url, headers, cluster, signal, {});
   if (!response.ok) throw new Error(`Shards for index ${response.status} ${response.statusText}`);
   const data = await response.json();
   return Array.isArray(data) ? data : [];
@@ -465,7 +484,7 @@ export async function getShardAllocationExplain(
     primary: params.primary
   });
 
-  const response = await fetchWithTimeoutAndRetry(url, headers, signal, { method: 'POST', body }, cluster);
+  const response = await fetchWithTimeoutAndRetry(url, headers, cluster, signal, { method: 'POST', body });
   if (!response.ok) {
     throw new Error(`Allocation explain ${response.status} ${response.statusText}`);
   }
@@ -542,7 +561,7 @@ export async function getSnapshotRepositories(
 ): Promise<string[]> {
   const url = `${cluster.baseUrl.replace(/\/$/, '')}/_snapshot`;
   const headers = buildHeaders(cluster);
-  const response = await fetchWithTimeoutAndRetry(url, headers, signal, {}, cluster);
+  const response = await fetchWithTimeoutAndRetry(url, headers, cluster, signal, {});
   if (!response.ok) throw new Error(`Snapshot repos ${response.status} ${response.statusText}`);
   const data = (await response.json()) as SnapshotReposResponse;
   if (Array.isArray(data.repositories)) {
@@ -570,7 +589,7 @@ export async function getSnapshotAll(
   }
   const url = `${cluster.baseUrl.replace(/\/$/, '')}${path}`;
   const headers = buildHeaders(cluster);
-  const response = await fetchWithTimeoutAndRetry(url, headers, signal, {}, cluster);
+  const response = await fetchWithTimeoutAndRetry(url, headers, cluster, signal, {});
   if (!response.ok) throw new Error(`Snapshots ${response.status} ${response.statusText}`);
   return (await response.json()) as SnapshotAllResponse;
 }
@@ -582,7 +601,7 @@ export async function getSnapshotAllFromAllRepos(
 ): Promise<SnapshotAllResponse> {
   const url = `${cluster.baseUrl.replace(/\/$/, '')}/_snapshot/_all/_all?include_repository=true`;
   const headers = buildHeaders(cluster);
-  const response = await fetchWithTimeoutAndRetry(url, headers, signal, {}, cluster);
+  const response = await fetchWithTimeoutAndRetry(url, headers, cluster, signal, {});
   if (!response.ok) throw new Error(`Snapshots ${response.status} ${response.statusText}`);
   return (await response.json()) as SnapshotAllResponse;
 }
@@ -617,7 +636,7 @@ export async function getSnapshotStatus(
   });
   const url = `${base}/_snapshot/${encodeURIComponent(repoName)}/${encodeURIComponent(snapshotName)}/_status?${filterPath.toString()}`;
   const headers = buildHeaders(cluster);
-  const response = await fetchWithTimeoutAndRetry(url, headers, signal, {}, cluster);
+  const response = await fetchWithTimeoutAndRetry(url, headers, cluster, signal, {});
   if (!response.ok) throw new Error(`Snapshot status ${response.status} ${response.statusText}`);
   return (await response.json()) as SnapshotStatusResponse;
 }
@@ -631,7 +650,7 @@ export async function getSnapshotRepositoryVerify(
   const base = cluster.baseUrl.replace(/\/$/, '');
   const url = `${base}/_snapshot/${encodeURIComponent(repoName)}/_verify`;
   const headers = buildHeaders(cluster);
-  const response = await fetchWithTimeoutAndRetry(url, headers, signal, { method: 'POST' }, cluster);
+  const response = await fetchWithTimeoutAndRetry(url, headers, cluster, signal, { method: 'POST' });
   if (!response.ok) {
     let reason = '';
     try {
@@ -661,7 +680,7 @@ export async function getIndexDetails(
   const base = cluster.baseUrl.replace(/\/$/, '');
   const url = `${base}/${encodeURIComponent(index)}?${INDEX_DETAILS_FILTER}`;
   const headers = buildHeaders(cluster);
-  const response = await fetchWithTimeoutAndRetry(url, headers, signal, {}, cluster);
+  const response = await fetchWithTimeoutAndRetry(url, headers, cluster, signal, {});
   if (!response.ok) throw new Error(`Index details ${response.status} ${response.statusText}`);
   return (await response.json()) as IndexDetailsResponse;
 }
@@ -683,7 +702,7 @@ export async function getIlmExplain(
       : apiConfig.endpoints.ilmExplain + (!isAll ? `?index=${encodeURIComponent(indexPattern!)}` : '');
   const url = `${base}${path}`;
   const headers = buildHeaders(cluster);
-  const response = await fetchWithTimeoutAndRetry(url, headers, signal, {}, cluster);
+  const response = await fetchWithTimeoutAndRetry(url, headers, cluster, signal, {});
 
   if (response.status === 400) {
     skipRef && (skipRef.current = true);
@@ -702,7 +721,7 @@ export async function getIlmPolicy(
   const base = cluster.baseUrl.replace(/\/$/, '');
   const url = `${base}/_ilm/policy/${encodeURIComponent(policyName)}`;
   const headers = buildHeaders(cluster);
-  const response = await fetchWithTimeoutAndRetry(url, headers, signal, {}, cluster);
+  const response = await fetchWithTimeoutAndRetry(url, headers, cluster, signal, {});
   if (response.status === 404 || response.status === 403) return null;
   if (!response.ok) return null;
   return (await response.json()) as IlmPolicyResponse;
@@ -735,7 +754,7 @@ export async function getFieldUsageStats(
   const path = index ? `/${index}/_field_usage_stats` : apiConfig.endpoints.fieldUsageStats;
   const url = `${base}${path}`;
   const headers = buildHeaders(cluster);
-  const response = await fetchWithTimeoutAndRetry(url, headers, signal, {}, cluster);
+  const response = await fetchWithTimeoutAndRetry(url, headers, cluster, signal, {});
   if (response.status === 400 || response.status === 404) return null;
   if (!response.ok) throw new Error(`Field usage stats ${response.status} ${response.statusText}`);
   return (await response.json()) as FieldUsageStatsResponse;
@@ -761,7 +780,7 @@ export async function getCatIndexRow(
     'index,health,pri,rep,docs.count,docs.deleted,store.size,pri.store.size,creation.date.string';
   const url = `${base}/_cat/indices/${encodeURIComponent(index)}?format=json&h=${h}`;
   const headers = buildHeaders(cluster);
-  const response = await fetchWithTimeoutAndRetry(url, headers, signal, {}, cluster);
+  const response = await fetchWithTimeoutAndRetry(url, headers, cluster, signal, {});
   if (response.status === 404) return null;
   if (!response.ok) throw new Error(`Cat index ${response.status} ${response.statusText}`);
   const data = (await response.json()) as CatIndexRow[];
@@ -777,12 +796,32 @@ export async function getCatAliases(
   return Array.isArray(data) ? data : [];
 }
 
-/** GET _data_stream. */
+const dataStreamsCache = new Map<string, DataStreamsResponse>();
+const dataStreamsUnsupportedClusters = new Set<string>();
+
+/** GET _data_stream. Cached per cluster; 400 → empty (API unavailable on older clusters). */
 export async function getDataStreams(
   cluster: ClusterConnection,
   signal?: AbortSignal | null
 ): Promise<DataStreamsResponse> {
-  return request<DataStreamsResponse>('dataStreams', cluster, signal);
+  const clusterKey = clusterKeyFromBaseUrl(cluster.baseUrl);
+  if (dataStreamsUnsupportedClusters.has(clusterKey)) {
+    return { data_streams: [] };
+  }
+  const cached = dataStreamsCache.get(clusterKey);
+  if (cached) return cached;
+
+  try {
+    const data = await request<DataStreamsResponse>('dataStreams', cluster, signal);
+    dataStreamsCache.set(clusterKey, data);
+    return data;
+  } catch (err) {
+    if (err instanceof Error && /\b400\b/.test(err.message)) {
+      dataStreamsUnsupportedClusters.add(clusterKey);
+      return { data_streams: [] };
+    }
+    throw err;
+  }
 }
 
 /** GET /_nodes?filter_path=nodes.*.name,nodes.*.roles — used for tier mapping in Data streams view. */
@@ -835,17 +874,12 @@ export async function searchIndexDocuments(
   body: Record<string, unknown>,
   signal?: AbortSignal | null
 ): Promise<SearchResponse> {
-  const base = cluster.baseUrl.replace(/\/$/, '');
   const path = `/${(indexPattern || '*').trim() || '*'}/_search`;
-  const url = `${base}${path}`;
-  const headers = buildHeaders(cluster);
-  const response = await fetchWithTimeoutAndRetry(
-    url,
-    headers,
-    signal,
-    { method: 'POST', body: JSON.stringify(body) },
-    cluster
-  );
+  const response = await clusterRequest(cluster, path, {
+    method: 'POST',
+    body: JSON.stringify(body),
+    signal
+  });
   if (!response.ok) {
     const text = await response.text().catch(() => '');
     throw new Error(`Search ${response.status} ${response.statusText}${text ? ` - ${text}` : ''}`);

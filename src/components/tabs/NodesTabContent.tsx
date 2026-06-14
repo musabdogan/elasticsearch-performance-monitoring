@@ -371,17 +371,30 @@ export function NodesTabContent({
     }
   }, [activeCluster, modalOnly, isClusterUnreachable, refreshNodes]);
 
-  useEffect(() => {
+  const allocationAbortRef = useRef<AbortController | null>(null);
+
+  const loadCatAllocation = useCallback(async () => {
     if (modalOnly || isClusterUnreachable || !activeCluster) {
       setCatAllocationRows([]);
       return;
     }
+    allocationAbortRef.current?.abort();
     const controller = new AbortController();
-    void getCatAllocation(activeCluster, controller.signal)
-      .then((rows) => setCatAllocationRows(Array.isArray(rows) ? rows : []))
-      .catch(() => setCatAllocationRows([]));
-    return () => controller.abort();
-  }, [activeCluster, modalOnly, isClusterUnreachable, nodes]);
+    allocationAbortRef.current = controller;
+    try {
+      const rows = await getCatAllocation(activeCluster, controller.signal);
+      if (!controller.signal.aborted) {
+        setCatAllocationRows(Array.isArray(rows) ? rows : []);
+      }
+    } catch {
+      if (!controller.signal.aborted) setCatAllocationRows([]);
+    }
+  }, [activeCluster, modalOnly, isClusterUnreachable]);
+
+  useEffect(() => {
+    void loadCatAllocation();
+    return () => allocationAbortRef.current?.abort();
+  }, [loadCatAllocation]);
 
   // Global Refresh button only triggers _cat/nodes when on Nodes tab
   useEffect(() => {
@@ -390,14 +403,14 @@ export function NodesTabContent({
       if (!activeCluster || isClusterUnreachable) return;
       onRefreshStateChange?.(true);
       try {
-        await refreshNodes();
+        await Promise.all([refreshNodes(), loadCatAllocation()]);
       } finally {
         onRefreshStateChange?.(false);
       }
     };
     window.addEventListener('refreshNodes', onRefreshNodes);
     return () => window.removeEventListener('refreshNodes', onRefreshNodes);
-  }, [activeCluster, modalOnly, isClusterUnreachable, refreshNodes, onRefreshStateChange]);
+  }, [activeCluster, modalOnly, isClusterUnreachable, refreshNodes, loadCatAllocation, onRefreshStateChange]);
 
   const selectedNodeRow = useMemo(() => {
     if (!selectedNodeName) return null;

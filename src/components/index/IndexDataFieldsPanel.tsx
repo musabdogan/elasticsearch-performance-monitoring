@@ -7,6 +7,8 @@ type IndexDataFieldsPanelProps = {
   selectedColumns: string[];
   filter: string;
   defaultsFromFieldUsage?: boolean;
+  autoColumns?: boolean;
+  onAutoColumnsChange?: (enabled: boolean) => void;
   onFilterChange: (value: string) => void;
   onToggleField: (field: string) => void;
   onReset: () => void;
@@ -17,6 +19,8 @@ export function IndexDataFieldsPanel({
   selectedColumns,
   filter,
   defaultsFromFieldUsage = false,
+  autoColumns = true,
+  onAutoColumnsChange,
   onFilterChange,
   onToggleField,
   onReset
@@ -61,6 +65,35 @@ export function IndexDataFieldsPanel({
           Drag onto the table or click to toggle. {selectedColumns.length} selected.
           {defaultsFromFieldUsage ? ' Defaults from field usage.' : ''}
         </p>
+        {onAutoColumnsChange && (
+          <div className="mt-2 flex items-start justify-between gap-2 rounded border border-gray-200/80 bg-white/70 px-2 py-1.5 dark:border-gray-600/80 dark:bg-gray-800/40">
+            <div className="min-w-0">
+              <span className="text-xs font-medium text-gray-700 dark:text-gray-300">Auto columns</span>
+              <p className="text-[10px] leading-snug text-gray-500 dark:text-gray-400">
+                {autoColumns
+                  ? 'Updates visible fields when you change index.'
+                  : 'Keeps your column pick when you change index.'}
+              </p>
+            </div>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={autoColumns}
+              aria-label="Auto columns"
+              title={autoColumns ? 'Disable auto columns' : 'Enable auto columns'}
+              onClick={() => onAutoColumnsChange(!autoColumns)}
+              className={`relative mt-0.5 h-5 w-9 shrink-0 rounded-full transition-colors ${
+                autoColumns ? 'bg-blue-600 dark:bg-blue-500' : 'bg-gray-300 dark:bg-gray-600'
+              }`}
+            >
+              <span
+                className={`absolute top-0.5 left-0.5 h-4 w-4 rounded-full bg-white shadow transition-transform ${
+                  autoColumns ? 'translate-x-4' : 'translate-x-0'
+                }`}
+              />
+            </button>
+          </div>
+        )}
       </div>
       <ul className="max-h-[38vh] flex-1 overflow-y-auto py-1">
         {filteredFields.length === 0 && (

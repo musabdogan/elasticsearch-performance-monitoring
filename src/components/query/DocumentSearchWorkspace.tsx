@@ -1,5 +1,5 @@
 import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type ReactNode } from 'react';
-import { ChevronDown, ChevronRight, Download, GripVertical, RefreshCw, X } from 'lucide-react';
+import { ChevronDown, ChevronRight, Download, GripVertical, RefreshCw, X, ArrowDown, ArrowUp } from 'lucide-react';
 import { CodeBlockWithCopy } from '@/components/ui/CodeBlockWithCopy';
 import { IndexDataFieldsPanel } from '@/components/index/IndexDataFieldsPanel';
 import type { ClusterConnection } from '@/types/app';
@@ -9,7 +9,7 @@ import {
   setFieldDragPayload,
   type FieldDragPayload
 } from '@/hooks/useDocumentColumns';
-import { INDEX_SEARCH_MAX_RESULT_WINDOW } from '@/utils/indexSearchQuery';
+import { DOCUMENT_PAGE_SIZE_OPTIONS, formatDocumentTotalLabel } from '@/utils/indexSearchQuery';
 import {
   downloadIndexDataCsv,
   downloadIndexDataJson,
@@ -111,6 +111,7 @@ export type DocumentSearchWorkspaceProps = {
   from: number;
   queryKey: string;
   total: number | null;
+  totalIsLowerBound?: boolean;
   took: number | null;
   page: number;
   totalPages: number | null;
@@ -123,6 +124,8 @@ export type DocumentSearchWorkspaceProps = {
   selectedColumns: string[];
   dropTargetIndex: number | null;
   defaultsFromFieldUsage?: boolean;
+  autoColumns?: boolean;
+  onAutoColumnsChange?: (enabled: boolean) => void;
   setDropTargetIndex: (index: number | null) => void;
   toggleColumn: (field: string) => void;
   removeColumn: (field: string) => void;
@@ -130,6 +133,9 @@ export type DocumentSearchWorkspaceProps = {
   handleDropAtEnd: (payload: FieldDragPayload) => void;
   resetToDefault: () => void;
   tableMaxHeight?: string;
+  sortField?: string | null;
+  sortOrder?: 'asc' | 'desc' | null;
+  onColumnSort?: (field: string) => void;
 };
 
 export function DocumentSearchWorkspace({
@@ -140,6 +146,7 @@ export function DocumentSearchWorkspace({
   from,
   queryKey,
   total,
+  totalIsLowerBound = false,
   took,
   page,
   totalPages,
@@ -152,13 +159,18 @@ export function DocumentSearchWorkspace({
   selectedColumns,
   dropTargetIndex,
   defaultsFromFieldUsage = false,
+  autoColumns = true,
+  onAutoColumnsChange,
   setDropTargetIndex,
   toggleColumn,
   removeColumn,
   handleColumnDrop,
   handleDropAtEnd,
   resetToDefault,
-  tableMaxHeight = 'max-h-[44vh]'
+  tableMaxHeight = 'max-h-[44vh]',
+  sortField = null,
+  sortOrder = null,
+  onColumnSort
 }: DocumentSearchWorkspaceProps) {
   const connectedAccountNote = useMemo(() => getConnectedAccountNote(cluster), [cluster]);
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -210,12 +222,7 @@ export function DocumentSearchWorkspace({
   }, [hits, exportColumns, indexLabel, page]);
 
   const showingEnd = from + hits.length;
-  const totalLabel =
-    total != null
-      ? total >= INDEX_SEARCH_MAX_RESULT_WINDOW
-        ? `${Intl.NumberFormat('en-US').format(total)}+`
-        : Intl.NumberFormat('en-US').format(total)
-      : '—';
+  const totalLabel = formatDocumentTotalLabel(total, totalIsLowerBound);
 
   const onHeaderDragOver = (e: DragEvent, index: number) => {
     e.preventDefault();
@@ -287,6 +294,8 @@ export function DocumentSearchWorkspace({
             onToggleField={toggleColumn}
             onReset={resetToDefault}
             defaultsFromFieldUsage={defaultsFromFieldUsage}
+            autoColumns={autoColumns}
+            onAutoColumnsChange={onAutoColumnsChange}
           />
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center justify-between gap-2 border-b border-gray-200 bg-white px-3 py-2 dark:border-gray-700 dark:bg-gray-900/30">
@@ -307,18 +316,18 @@ export function DocumentSearchWorkspace({
               {pagination && (
                 <div className="flex flex-wrap items-center gap-2 text-sm text-gray-600 dark:text-gray-400">
                   <span>Rows:</span>
-                  {[10, 20, 50].map((n) => (
+                  {DOCUMENT_PAGE_SIZE_OPTIONS.map(({ value, label }) => (
                     <button
-                      key={n}
+                      key={value}
                       type="button"
-                      onClick={() => pagination.onSizeChange(n)}
+                      onClick={() => pagination.onSizeChange(value)}
                       className={`rounded border px-2 py-0.5 font-mono ${
-                        pagination.size === n
+                        pagination.size === value
                           ? 'border-blue-500 bg-blue-50 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300'
                           : 'border-gray-300 dark:border-gray-600 hover:bg-gray-100 dark:hover:bg-gray-700'
                       }`}
                     >
-                      {n}
+                      {label}
                     </button>
                   ))}
                   <span className="flex gap-2">
@@ -406,7 +415,29 @@ export function DocumentSearchWorkspace({
                           >
                             <div className="flex items-center gap-0.5 pr-4">
                               <GripVertical className="h-3 w-3 shrink-0 cursor-grab text-gray-400 opacity-0 group-hover:opacity-100" />
-                              <span className="truncate">{col}</span>
+                              {onColumnSort ? (
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    onColumnSort(col);
+                                  }}
+                                  className={`flex min-w-0 items-center gap-0.5 truncate rounded px-0.5 hover:bg-gray-300/60 dark:hover:bg-gray-600/60 ${
+                                    sortField === col ? 'text-blue-700 dark:text-blue-300' : ''
+                                  }`}
+                                  title={`Sort by ${col}`}
+                                >
+                                  <span className="truncate">{col}</span>
+                                  {sortField === col && sortOrder === 'asc' ? (
+                                    <ArrowUp className="h-3 w-3 shrink-0" />
+                                  ) : null}
+                                  {sortField === col && sortOrder === 'desc' ? (
+                                    <ArrowDown className="h-3 w-3 shrink-0" />
+                                  ) : null}
+                                </button>
+                              ) : (
+                                <span className="truncate">{col}</span>
+                              )}
                             </div>
                             <button
                               type="button"

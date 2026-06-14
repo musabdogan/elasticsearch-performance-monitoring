@@ -10,6 +10,7 @@ type QueryDiscoverBarProps = {
   indexPattern: string;
   onIndexPatternChange: (value: string) => void;
   patternOptions: QueryPatternOption[];
+  onIndexPickerOpen?: () => void;
   mode: QueryMode;
   onModeChange: (mode: QueryMode) => void;
   query: string;
@@ -22,6 +23,7 @@ export function QueryDiscoverBar({
   indexPattern,
   onIndexPatternChange,
   patternOptions,
+  onIndexPickerOpen,
   mode,
   onModeChange,
   query,
@@ -35,6 +37,9 @@ export function QueryDiscoverBar({
         value={indexPattern}
         onChange={onIndexPatternChange}
         options={patternOptions}
+        onOpenChange={(open) => {
+          if (open) onIndexPickerOpen?.();
+        }}
       />
 
       {mode === 'simple' && (

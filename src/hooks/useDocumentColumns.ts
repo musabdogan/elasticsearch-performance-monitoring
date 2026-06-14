@@ -5,6 +5,7 @@ import {
   columnsEqual,
   getDefaultColumnsFromFieldUsage,
   insertColumn,
+  isDisplayableSourceField,
   mergeAvailableSourceFields,
   META_FIELD_ID,
   META_FIELD_INDEX,
@@ -53,20 +54,33 @@ export function useDocumentColumns(
   scopeKey: string,
   hits: SearchHit[],
   fieldUsageSummary?: FieldUsageSummary | null,
-  includeIndexField = false
+  includeIndexField = false,
+  fieldMetadataReady = true,
+  primaryTimestampField?: string | null,
+  autoColumns = true
 ) {
   const availableFields = useMemo(
     () => mergeAvailableSourceFields(hits, fieldUsageSummary, includeIndexField),
     [hits, fieldUsageSummary, includeIndexField]
   );
+
+  const sanitizeColumns = useCallback(
+    (cols: string[]) => cols.filter((col) => isDisplayableSourceField(col) || col === META_FIELD_ID || col === META_FIELD_INDEX),
+    []
+  );
+  const defaultsFromFieldUsage = useMemo(
+    () => Boolean(getDefaultColumnsFromFieldUsage(fieldUsageSummary)?.length),
+    [fieldUsageSummary]
+  );
+
   const defaultColumns = useMemo(() => {
-    const cols = resolveDefaultDataColumns(hits, fieldUsageSummary);
+    const cols = resolveDefaultDataColumns(hits, fieldUsageSummary, undefined, primaryTimestampField);
     return includeIndexField ? prependIndexIfNeeded(cols) : cols;
-  }, [hits, fieldUsageSummary, includeIndexField]);
+  }, [hits, fieldUsageSummary, includeIndexField, primaryTimestampField]);
   const pageDefaults = useMemo(() => {
-    const cols = resolveDefaultDataColumns(hits);
+    const cols = resolveDefaultDataColumns(hits, undefined, undefined, primaryTimestampField);
     return includeIndexField ? prependIndexIfNeeded(cols) : cols;
-  }, [hits, includeIndexField]);
+  }, [hits, includeIndexField, primaryTimestampField]);
 
   const [selectedColumns, setSelectedColumns] = useState<string[]>([]);
   const [dropTargetIndex, setDropTargetIndex] = useState<number | null>(null);
@@ -75,36 +89,74 @@ export function useDocumentColumns(
 
   useEffect(() => {
     needsInitRef.current = true;
-    userModifiedRef.current = false;
+    if (autoColumns) {
+      userModifiedRef.current = false;
+    }
     setSelectedColumns([]);
-  }, [scopeKey]);
+  }, [scopeKey, autoColumns]);
 
   useEffect(() => {
-    if (hits.length === 0 || !needsInitRef.current) return;
+    if (!fieldMetadataReady || !needsInitRef.current) return;
+    const canInitFromUsage = defaultsFromFieldUsage && autoColumns;
+    if (!canInitFromUsage && hits.length === 0) return;
 
+    needsInitRef.current = false;
     const saved = readStoredColumns(scopeKey);
-    if (saved?.length) {
-      needsInitRef.current = false;
-      setSelectedColumns(saved);
+    if (saved?.length && (!autoColumns || (!userModifiedRef.current && !defaultsFromFieldUsage))) {
+      setSelectedColumns(sanitizeColumns(saved));
       return;
     }
 
-    needsInitRef.current = false;
-    setSelectedColumns(defaultColumns);
-  }, [hits.length, scopeKey, defaultColumns]);
+    setSelectedColumns(sanitizeColumns(defaultColumns));
+  }, [
+    hits.length,
+    scopeKey,
+    defaultColumns,
+    defaultsFromFieldUsage,
+    autoColumns,
+    sanitizeColumns,
+    fieldMetadataReady
+  ]);
 
   useEffect(() => {
-    if (!fieldUsageSummary?.hasUsageData || userModifiedRef.current) return;
-    if (readStoredColumns(scopeKey)?.length) return;
+    if (!autoColumns) return;
+    if (!fieldMetadataReady || userModifiedRef.current) return;
+
+    if (defaultsFromFieldUsage) {
+      setSelectedColumns((prev) => {
+        const next = sanitizeColumns(defaultColumns);
+        if (prev.length === 0) return next;
+        if (columnsEqual(prev, next)) return prev;
+        if (columnsEqual(prev, pageDefaults) || columnsEqual(prev, sanitizeColumns(pageDefaults))) {
+          return next;
+        }
+        return prev;
+      });
+      return;
+    }
+
+    if (!fieldUsageSummary?.fieldList?.length) return;
 
     setSelectedColumns((prev) => {
-      if (prev.length === 0) return defaultColumns;
+      if (prev.length === 0) return sanitizeColumns(defaultColumns);
       if (columnsEqual(prev, pageDefaults) && !columnsEqual(defaultColumns, pageDefaults)) {
-        return defaultColumns;
+        return sanitizeColumns(defaultColumns);
+      }
+      if (columnsEqual(prev, sanitizeColumns(pageDefaults))) {
+        return sanitizeColumns(defaultColumns);
       }
       return prev;
     });
-  }, [fieldUsageSummary, defaultColumns, pageDefaults, scopeKey]);
+  }, [
+    fieldUsageSummary,
+    defaultColumns,
+    pageDefaults,
+    defaultsFromFieldUsage,
+    autoColumns,
+    scopeKey,
+    fieldMetadataReady,
+    sanitizeColumns
+  ]);
 
   useEffect(() => {
     if (selectedColumns.length === 0) return;
@@ -137,6 +189,7 @@ export function useDocumentColumns(
 
   const toggleColumn = useCallback(
     (field: string) => {
+      if (!isDisplayableSourceField(field) && field !== META_FIELD_ID && field !== META_FIELD_INDEX) return;
       markUserModified();
       setSelectedColumns((prev) =>
         prev.includes(field) ? prev.filter((col) => col !== field) : [...prev, field]
@@ -184,13 +237,9 @@ export function useDocumentColumns(
 
   const resetToDefault = useCallback(() => {
     userModifiedRef.current = false;
-    setSelectedColumns(defaultColumns);
-  }, [defaultColumns]);
-
-  const defaultsFromFieldUsage = useMemo(
-    () => Boolean(getDefaultColumnsFromFieldUsage(fieldUsageSummary)?.length),
-    [fieldUsageSummary]
-  );
+    needsInitRef.current = false;
+    setSelectedColumns(sanitizeColumns(defaultColumns));
+  }, [defaultColumns, sanitizeColumns]);
 
   return {
     availableFields,

@@ -29,7 +29,8 @@ export function QueryAdvancedEditor({ value, onChange, error, disabled }: QueryA
       />
       {error && <p className="text-xs text-red-600 dark:text-red-400">{error}</p>}
       <p className="text-[10px] text-gray-500 dark:text-gray-400">
-        Full <code className="font-mono">POST /{'{index}'}/_search</code> body. Size, from, sort, and track_total_hits are merged on run.
+        Full <code className="font-mono">POST /{'{index}'}/_search</code> body. Size, from, and sort are merged on run.{' '}
+        <code className="font-mono">track_total_hits</code> is added for a single index only.
       </p>
     </div>
   );

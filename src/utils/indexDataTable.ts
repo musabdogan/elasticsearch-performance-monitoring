@@ -1,10 +1,12 @@
 import type { SearchHit } from '@/types/api';
 import type { FieldUsageSummary } from '@/utils/indexDetailHelpers';
+import type { SortRule } from '@/utils/querySearch';
 
 export const DEFAULT_VISIBLE_FIELD_COUNT = 8;
 export const META_FIELD_ID = '_id';
 export const META_FIELD_INDEX = '_index';
 const COLUMN_STORAGE_PREFIX = 'es-monitor-data-cols:';
+const AUTO_COLUMNS_STORAGE_KEY = 'es-monitor-auto-columns';
 
 export function formatSourceCellValue(value: unknown, maxLen = 96): string {
   if (value == null) return '';
@@ -55,6 +57,16 @@ export function isMetaDataField(field: string): boolean {
   return field === META_FIELD_ID || field === META_FIELD_INDEX;
 }
 
+/** Elasticsearch multi-field keyword subfields (e.g. rule_id.keyword) are not stored in _source. */
+export function isKeywordSubfield(field: string): boolean {
+  return field.endsWith('.keyword');
+}
+
+export function isDisplayableSourceField(field: string): boolean {
+  if (field.startsWith('_')) return isMetaDataField(field);
+  return !isKeywordSubfield(field);
+}
+
 export function getHitColumnValue(hit: SearchHit, field: string, indexName: string, maxLen?: number): string {
   if (field === META_FIELD_ID) return hit._id ?? '';
   if (field === META_FIELD_INDEX) return hit._index ?? indexName;
@@ -62,15 +74,29 @@ export function getHitColumnValue(hit: SearchHit, field: string, indexName: stri
   return formatSourceCellValue(source[field], maxLen) || '';
 }
 
-function prependMetaFields(fields: string[], includeIndex = false): string[] {
+function buildDefaultColumnOrder(
+  fields: string[],
+  primaryTimestampField?: string | null,
+  includeIndex = false
+): string[] {
   const seen = new Set<string>();
   const merged: string[] = [];
-  for (const name of [META_FIELD_ID, ...(includeIndex ? [META_FIELD_INDEX] : [])]) {
-    if (!seen.has(name)) {
-      seen.add(name);
-      merged.push(name);
-    }
+
+  const timestampField =
+    primaryTimestampField && isDisplayableSourceField(primaryTimestampField)
+      ? primaryTimestampField
+      : null;
+
+  if (timestampField) {
+    merged.push(timestampField);
+    seen.add(timestampField);
   }
+
+  if (includeIndex && !seen.has(META_FIELD_INDEX)) {
+    seen.add(META_FIELD_INDEX);
+    merged.push(META_FIELD_INDEX);
+  }
+
   for (const name of fields) {
     if (!seen.has(name) && !isMetaDataField(name)) {
       seen.add(name);
@@ -87,7 +113,7 @@ export function getDefaultColumnsFromFieldUsage(
 ): string[] | null {
   if (!summary?.hasUsageData || !summary.fieldList?.length) return null;
   const columns = summary.fieldList
-    .filter((field) => field.usage > 0 && !field.name.startsWith('_'))
+    .filter((field) => field.usage > 0 && !field.name.startsWith('_') && !isKeywordSubfield(field.name))
     .sort((a, b) => b.usage - a.usage || a.name.localeCompare(b.name))
     .slice(0, maxCols)
     .map((field) => field.name);
@@ -104,18 +130,19 @@ export function mergeAvailableSourceFields(
   if (includeIndexField) names.add(META_FIELD_INDEX);
 
   for (const field of summary?.fieldList ?? []) {
-    if (!field.name.startsWith('_')) names.add(field.name);
+    if (!isDisplayableSourceField(field.name)) continue;
+    names.add(field.name);
   }
 
   for (const hit of hits) {
     const source = hit._source;
     if (!source || typeof source !== 'object') continue;
     for (const key of Object.keys(source as Record<string, unknown>)) {
-      if (!key.startsWith('_')) names.add(key);
+      if (isDisplayableSourceField(key)) names.add(key);
     }
   }
 
-  return sortFieldNames([...names]);
+  return sortFieldNames([...names].filter(isDisplayableSourceField));
 }
 
 export function columnsEqual(a: string[], b: string[]): boolean {
@@ -130,22 +157,97 @@ export function getDefaultVisibleColumns(
   return sortFieldsByFrequency(collectFieldCounts(hits)).slice(0, maxCols);
 }
 
-/** Resolve default columns: _id first, then field usage or page frequency. */
+/** Resolve default columns: primary timestamp first (when known), then field usage or page frequency. */
 export function resolveDefaultDataColumns(
   hits: SearchHit[],
   summary?: FieldUsageSummary | null,
-  maxCols = DEFAULT_VISIBLE_FIELD_COUNT
+  maxCols = DEFAULT_VISIBLE_FIELD_COUNT,
+  primaryTimestampField?: string | null
 ): string[] {
-  const sourceMax = Math.max(1, maxCols - 1);
+  const metaSlots = primaryTimestampField ? 1 : 0;
+  const sourceMax = Math.max(1, maxCols - metaSlots);
   const sourceCols =
     getDefaultColumnsFromFieldUsage(summary, sourceMax) ??
     getDefaultVisibleColumns(hits, sourceMax);
-  return prependMetaFields(sourceCols, false);
+  return buildDefaultColumnOrder(sourceCols, primaryTimestampField, false);
+}
+
+/** Default document sort: newest first on the primary timestamp field. */
+export function isFieldAvailableInUsage(
+  field: string,
+  summary?: FieldUsageSummary | null
+): boolean {
+  if (!field) return false;
+  if (isMetaDataField(field)) return true;
+  if (!summary?.fieldList?.length) {
+    return field === '@timestamp' || field === 'timestamp';
+  }
+  const displayField = displayFieldForSortField(field) ?? field;
+  return summary.fieldList.some(
+    (entry) =>
+      entry.name === field ||
+      entry.name === displayField ||
+      entry.name === `${displayField}.keyword`
+  );
+}
+
+export function resolveDefaultDocumentSort(
+  primaryTimestampField: string | null | undefined,
+  summary?: FieldUsageSummary | null
+): SortRule[] {
+  if (!primaryTimestampField) return [];
+  if (!isFieldAvailableInUsage(primaryTimestampField, summary)) return [];
+  return [
+    {
+      field: resolveElasticsearchSortField(primaryTimestampField, summary),
+      order: 'desc'
+    }
+  ];
+}
+
+/** Drop or replace sort rules that do not exist in the current index mapping. */
+export function sanitizeDocumentSort(
+  sort: SortRule[],
+  primaryTimestampField: string | null | undefined,
+  summary?: FieldUsageSummary | null,
+  opts?: { staleDefaultTimeField?: string | null }
+): SortRule[] {
+  const defaultSort = resolveDefaultDocumentSort(primaryTimestampField, summary);
+  if (sort.length === 0) return defaultSort;
+
+  const staleDefault = opts?.staleDefaultTimeField;
+  if (staleDefault && primaryTimestampField && staleDefault !== primaryTimestampField) {
+    const sortDisplay = displayFieldForSortField(sort[0].field) ?? sort[0].field;
+    if (sortDisplay === staleDefault) return defaultSort;
+  }
+
+  if (isFieldAvailableInUsage(sort[0].field, summary)) return sort;
+  return defaultSort;
 }
 
 export function shouldShowIndexColumn(hits: SearchHit[], indexName: string): boolean {
   if (hits.length === 0) return false;
   return hits.some((hit) => (hit._index ?? indexName) !== indexName);
+}
+
+export function resolveElasticsearchSortField(
+  field: string,
+  summary?: FieldUsageSummary | null
+): string {
+  if (isMetaDataField(field)) return field;
+  const keywordField = `${field}.keyword`;
+  if (summary?.fieldList?.some((f) => f.name === keywordField)) {
+    return keywordField;
+  }
+  return field;
+}
+
+export function displayFieldForSortField(sortField: string | null | undefined): string | null {
+  if (!sortField) return null;
+  if (isKeywordSubfield(sortField)) {
+    return sortField.slice(0, -'.keyword'.length);
+  }
+  return sortField;
 }
 
 export function readStoredColumns(indexName: string): string[] | null {
@@ -163,6 +265,23 @@ export function readStoredColumns(indexName: string): string[] | null {
 export function writeStoredColumns(indexName: string, columns: string[]): void {
   try {
     sessionStorage.setItem(`${COLUMN_STORAGE_PREFIX}${indexName}`, JSON.stringify(columns));
+  } catch {
+    // ignore quota / private mode
+  }
+}
+
+/** When true (default), visible columns reset from field usage on index change. */
+export function readAutoColumnsEnabled(): boolean {
+  try {
+    return sessionStorage.getItem(AUTO_COLUMNS_STORAGE_KEY) !== 'false';
+  } catch {
+    return true;
+  }
+}
+
+export function writeAutoColumnsEnabled(enabled: boolean): void {
+  try {
+    sessionStorage.setItem(AUTO_COLUMNS_STORAGE_KEY, enabled ? 'true' : 'false');
   } catch {
     // ignore quota / private mode
   }

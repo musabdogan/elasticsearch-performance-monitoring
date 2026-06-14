@@ -1,4 +1,4 @@
-import { buildIndexSearchBody } from '@/utils/indexSearchQuery';
+import { buildIndexSearchBody, DOCUMENT_SEARCH_MAX_SIZE } from '@/utils/indexSearchQuery';
 
 export type QueryMode = 'simple' | 'advanced';
 
@@ -15,6 +15,31 @@ export const ALL_INDICES_PATTERN = '*';
 export function normalizeQueryIndexPattern(pattern: string): string {
   const trimmed = pattern.trim();
   return trimmed || ALL_INDICES_PATTERN;
+}
+
+/** True when the pattern is the cluster-wide all-indices selector. */
+export function isAllIndicesQueryPattern(pattern: string): boolean {
+  const p = normalizeQueryIndexPattern(pattern);
+  return p === ALL_INDICES_PATTERN || p === '_all';
+}
+
+/** True when the pattern targets one index/data stream (no *, ?, or comma). */
+export function isConcreteIndexPattern(pattern: string): boolean {
+  const p = normalizeQueryIndexPattern(pattern);
+  if (isAllIndicesQueryPattern(p)) return false;
+  return !/[*,?]/.test(p) && !p.includes(',');
+}
+
+export function applyTrackTotalHitsPolicy(
+  body: Record<string, unknown>,
+  indexPattern: string
+): Record<string, unknown> {
+  if (isConcreteIndexPattern(indexPattern)) {
+    return { ...body, track_total_hits: true };
+  }
+  const next = { ...body };
+  delete next.track_total_hits;
+  return next;
 }
 
 export function buildSortClause(rules: SortRule[]): unknown[] {
@@ -38,7 +63,6 @@ export function buildSimpleSearchBody(
   const body = buildIndexSearchBody(query, size, from, []);
   const sortClause = buildSortClause(sort);
   if (sortClause.length > 0) body.sort = sortClause;
-  body.track_total_hits = true;
   return body;
 }
 
@@ -60,11 +84,11 @@ export function buildAdvancedSearchBody(
   }
 
   const body = { ...parsed };
-  body.size = Math.max(1, Math.min(size, 100));
+  body.size = Math.max(1, Math.min(size, DOCUMENT_SEARCH_MAX_SIZE));
   body.from = Math.max(0, from);
   const sortClause = buildSortClause(sort);
   if (sortClause.length > 0) body.sort = sortClause;
-  body.track_total_hits = true;
+  delete body.track_total_hits;
   return { body, error: null };
 }
 
