@@ -27,7 +27,7 @@ export function QuerySimpleSearchBar({
           onKeyDown={(e) => {
             if (e.key === 'Enter') onSearch();
           }}
-          placeholder="Filter your data using query_string syntax"
+          placeholder="Filter your data"
           className="w-full rounded-md border border-gray-200 bg-gray-50 py-2 pl-9 pr-3 text-sm font-mono text-gray-900 placeholder:text-gray-400 focus:border-blue-500 focus:bg-white focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:focus:bg-gray-800"
           aria-label="Document search query"
         />

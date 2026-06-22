@@ -1,4 +1,4 @@
-import { memo, useCallback, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Bar,
   BarChart,
@@ -13,10 +13,16 @@ import {
 import { ChevronDown, ChevronUp, Loader2, X } from 'lucide-react';
 import {
   brushSelectionToTimeRange,
+  computeHistogramBarSizePx,
+  formatHistogramFooterLabel,
+  formatHistogramTick,
   formatTimeRangeLabel,
+  padHistogramBucketsToWindow,
+  resolveHistogramChartSpanMs,
+  resolveHistogramInterval,
+  resolveHistogramXDomain,
   resolveSelectedBucketKeys,
   TIME_RANGE_PRESETS,
-  isSearchResultsPreset,
   type HistogramBucket,
   type TimeRangeFilter,
   type TimeRangePreset,
@@ -44,8 +50,9 @@ type QueryTimeHistogramProps = {
 };
 
 const CHART_HEIGHT = 140;
-const CHART_MARGIN = { top: 12, right: 12, left: 0, bottom: 36 };
+const CHART_MARGIN = { top: 12, right: 20, left: 0, bottom: 44 };
 const Y_AXIS_WIDTH = 56;
+const MAX_X_TICKS = 5;
 const BAR_FILL = '#3b82f6';
 const BAR_FILL_SELECTED = '#1d4ed8';
 
@@ -110,14 +117,20 @@ function DocCountYAxisTick({
   );
 }
 
-function resolveHistogramXTicks(keys: number[]): number[] {
-  if (keys.length <= 8) return keys;
-  const target = 6;
-  const step = Math.max(1, Math.floor(keys.length / target));
+function resolveHistogramXTicks(keys: number[], maxTicks = MAX_X_TICKS): number[] {
+  if (keys.length <= maxTicks) return keys;
+  const step = Math.max(1, Math.ceil((keys.length - 1) / (maxTicks - 1)));
   const ticks: number[] = [];
   for (let i = 0; i < keys.length; i += step) ticks.push(keys[i]);
   const last = keys[keys.length - 1];
-  if (ticks[ticks.length - 1] !== last) ticks.push(last);
+  const prev = ticks[ticks.length - 1];
+  // Skip last tick if too close to previous (prevents cramped edge labels).
+  if (prev !== last) {
+    const minGap = Math.max(1, Math.floor(keys.length / maxTicks / 2));
+    const prevIdx = keys.indexOf(prev);
+    const lastIdx = keys.length - 1;
+    if (lastIdx - prevIdx >= minGap) ticks.push(last);
+  }
   return ticks;
 }
 
@@ -159,13 +172,46 @@ export const QueryTimeHistogram = memo(function QueryTimeHistogram({
 }: QueryTimeHistogramProps) {
   const [refAreaLeft, setRefAreaLeft] = useState<number | null>(null);
   const [refAreaRight, setRefAreaRight] = useState<number | null>(null);
+  const [plotWidth, setPlotWidth] = useState(0);
   const selectingRef = useRef(false);
+  const chartContainerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const el = chartContainerRef.current;
+    if (!el) return;
+    const update = () => setPlotWidth(el.clientWidth);
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [collapsed]);
 
   const chartBusy = loading || boundsLoading || fieldsLoading;
 
+  // Complete, evenly-spaced series across the window so bars fill the full width.
+  const filledBuckets = useMemo(
+    () => padHistogramBucketsToWindow(buckets, activeRange, timeFieldBounds),
+    [buckets, activeRange, timeFieldBounds]
+  );
+
   const chartData = useMemo(
-    () => buckets.map((b) => ({ ...b, keyLabel: b.label || String(b.key) })),
-    [buckets]
+    () => filledBuckets.map((b) => ({ ...b, keyLabel: b.label || String(b.key) })),
+    [filledBuckets]
+  );
+
+  const chartSpanMs = useMemo(
+    () => resolveHistogramChartSpanMs(activeRange, filledBuckets, timeFieldBounds),
+    [activeRange, filledBuckets, timeFieldBounds]
+  );
+
+  const barSize = useMemo(
+    () =>
+      computeHistogramBarSizePx(filledBuckets, plotWidth, {
+        marginLeft: CHART_MARGIN.left,
+        marginRight: CHART_MARGIN.right,
+        yAxisWidth: Y_AXIS_WIDTH
+      }),
+    [filledBuckets, plotWidth]
   );
 
   const xAxisTicks = useMemo(
@@ -173,9 +219,30 @@ export const QueryTimeHistogram = memo(function QueryTimeHistogram({
     [chartData]
   );
 
+  const xDomain = useMemo(
+    () => resolveHistogramXDomain(activeRange, filledBuckets, timeFieldBounds),
+    [activeRange, filledBuckets, timeFieldBounds]
+  );
+
+  const histogramInterval = useMemo(() => resolveHistogramInterval(activeRange), [activeRange]);
+
+  const footerRange = useMemo(
+    () => ({
+      field: activeRange.field,
+      gte: new Date(xDomain[0]).toISOString(),
+      lte: new Date(xDomain[1]).toISOString()
+    }),
+    [activeRange.field, xDomain]
+  );
+
+  const histogramFooter = useMemo(
+    () => formatHistogramFooterLabel(footerRange, histogramInterval, timeFieldBounds),
+    [footerRange, histogramInterval, timeFieldBounds]
+  );
+
   const selectedBucketKeys = useMemo(
-    () => (brushRange ? resolveSelectedBucketKeys(buckets, brushRange) : new Set<number>()),
-    [brushRange, buckets]
+    () => (brushRange ? resolveSelectedBucketKeys(filledBuckets, brushRange) : new Set<number>()),
+    [brushRange, filledBuckets]
   );
 
   const resetSelection = useCallback(() => {
@@ -211,10 +278,10 @@ export const QueryTimeHistogram = memo(function QueryTimeHistogram({
       resetSelection();
       return;
     }
-    const range = brushSelectionToTimeRange(buckets, refAreaLeft, refAreaRight, selectedTimeField);
+    const range = brushSelectionToTimeRange(filledBuckets, refAreaLeft, refAreaRight, selectedTimeField);
     onBrushApply(range);
     resetSelection();
-  }, [refAreaLeft, refAreaRight, buckets, selectedTimeField, onBrushApply, resetSelection]);
+  }, [refAreaLeft, refAreaRight, filledBuckets, selectedTimeField, onBrushApply, resetSelection]);
 
   return (
     <div className="rounded-lg border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-900/40">
@@ -231,22 +298,11 @@ export const QueryTimeHistogram = memo(function QueryTimeHistogram({
 
         {collapsed ? (
           <span className="text-[11px] text-gray-500 dark:text-gray-400">
-            No time filter — expand to enable
+            Collapsed — expand for time chart (starts at 15m)
           </span>
         ) : (
           <>
             <div className="flex flex-wrap items-center gap-1">
-              <button
-                type="button"
-                onClick={() => onPresetChange('search')}
-                className={`rounded px-2 py-0.5 text-[11px] font-medium ${
-                  isSearchResultsPreset(timePreset) && !brushRange
-                    ? 'bg-blue-600 text-white dark:bg-blue-500'
-                    : 'bg-gray-100 text-gray-700 hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700'
-                }`}
-              >
-                Results
-              </button>
               {TIME_RANGE_PRESETS.map((preset) => (
                 <button
                   key={preset.id}
@@ -326,6 +382,7 @@ export const QueryTimeHistogram = memo(function QueryTimeHistogram({
             </div>
           ) : (
             <div
+              ref={chartContainerRef}
               className="w-full select-none overflow-visible [&_.recharts-bar-rectangle]:cursor-pointer"
               style={{ height: CHART_HEIGHT }}
               onMouseLeave={handleMouseUp}
@@ -334,7 +391,6 @@ export const QueryTimeHistogram = memo(function QueryTimeHistogram({
                 <BarChart
                   data={chartData}
                   margin={CHART_MARGIN}
-                  barCategoryGap="12%"
                   onMouseDown={handleMouseDown}
                   onMouseMove={handleMouseMove}
                   onMouseUp={handleMouseUp}
@@ -344,15 +400,14 @@ export const QueryTimeHistogram = memo(function QueryTimeHistogram({
                     dataKey="key"
                     type="number"
                     scale="linear"
-                    domain={['dataMin', 'dataMax']}
+                    domain={xDomain}
                     ticks={xAxisTicks}
-                    tickFormatter={(value) => {
-                      const bucket = chartData.find((b) => b.key === value);
-                      return bucket?.keyLabel ?? '';
-                    }}
-                    minTickGap={32}
-                    height={32}
-                    tickMargin={10}
+                    tickFormatter={(value) => formatHistogramTick(Number(value), chartSpanMs)}
+                    minTickGap={48}
+                    height={24}
+                    tickMargin={8}
+                    angle={0}
+                    textAnchor="middle"
                     tick={{ fontSize: 10, fill: '#9ca3af' }}
                     axisLine={false}
                     tickLine={false}
@@ -363,7 +418,7 @@ export const QueryTimeHistogram = memo(function QueryTimeHistogram({
                     dataKey="docCount"
                     radius={[2, 2, 0, 0]}
                     isAnimationActive={false}
-                    maxBarSize={48}
+                    barSize={barSize}
                   >
                     {chartData.map((entry) => (
                       <Cell
@@ -394,9 +449,14 @@ export const QueryTimeHistogram = memo(function QueryTimeHistogram({
               </ResponsiveContainer>
             </div>
           )}
-          <p className="mt-2 text-[10px] text-gray-400 dark:text-gray-500">
-            Click a bar or drag on the chart to filter by time range.
-          </p>
+          <div className="mt-2 space-y-1">
+            <p className="text-center text-[10px] tabular-nums text-gray-500 dark:text-gray-400">
+              {histogramFooter}
+            </p>
+            <p className="text-[10px] text-gray-400 dark:text-gray-500">
+              Click a bar or drag on the chart to filter by time range.
+            </p>
+          </div>
         </div>
       )}
     </div>

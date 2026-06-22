@@ -38,6 +38,12 @@ export interface AlertInstance {
   indexName?: string; // For index-specific alerts
   /** Affected resources (e.g. index names for indices-without-replicas). */
   affectedResources?: string[];
+  /** Optional runtime diagnosis context (thread pools, etc.). */
+  diagnosisContext?: {
+    searchQueueMax?: number;
+    searchActiveTotal?: number;
+    dominantPool?: string;
+  };
 }
 
 export interface AlertStats {

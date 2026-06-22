@@ -6,11 +6,11 @@ import { InfoPopup } from '@/components/ui/InfoPopup';
 import Pagination from '@/components/data/Pagination';
 import { RefreshCw, ArrowUp, ArrowDown, ArrowUpDown, Search, X } from 'lucide-react';
 import { TabSectionExpandTrigger } from '@/components/ui/TabSectionExpandTrigger';
-import { formatBytes, parseDiskSizeToBytes } from '@/utils/format';
+import { compareIpAddresses, formatBytes, parseDiskSizeToBytes, parseUptimeToSeconds } from '@/utils/format';
 import { getCatAllocation, getCatShards, getNodeStats } from '@/services/elasticsearch';
 import { hasSearchTerms, parseSearchTerms } from '@/utils/search';
 
-type SortKey = keyof CatNodeExtendedRow;
+type SortKey = keyof CatNodeExtendedRow | 'attributes';
 type SortDirection = 'asc' | 'desc' | null;
 
 const DEFAULT_SORT_COLUMN: SortKey = 'node.role';
@@ -18,7 +18,68 @@ const DEFAULT_SORT_DIRECTION: SortDirection = 'asc';
 const SECONDARY_SORT_COLUMN: SortKey = 'name';
 const SECONDARY_SORT_DIRECTION: SortDirection = 'asc';
 
-const NUMERIC_KEYS: SortKey[] = ['cpu', 'ram.percent', 'heap.percent', 'disk.used_percent', 'load_1m', 'shards'];
+/** Metrics default to descending (highest / busiest first). */
+const DESC_DEFAULT_SORT_KEYS: SortKey[] = [
+  'cpu',
+  'ram.percent',
+  'heap.percent',
+  'disk.used_percent',
+  'load_1m',
+  'shards',
+  'uptime'
+];
+
+const NUMERIC_SORT_KEYS: SortKey[] = [
+  'cpu',
+  'ram.percent',
+  'heap.percent',
+  'disk.used_percent',
+  'load_1m',
+  'shards',
+  'uptime'
+];
+
+interface NodeSortContext {
+  allocationByNodeKey: Map<string, CatAllocationRow>;
+  nodeAttrsByNodeId?: Record<string, Array<{ attr: string; value: string }>>;
+}
+
+function getAllocationForNode(
+  r: CatNodeExtendedRow,
+  allocationByNodeKey: Map<string, CatAllocationRow>
+): CatAllocationRow | null {
+  return (
+    allocationByNodeKey.get(`node:${String(r.name ?? '').trim()}`) ??
+    allocationByNodeKey.get(`ip:${String(r.ip ?? '').trim()}`) ??
+    allocationByNodeKey.get(`host:${String(r.ip ?? '').trim()}`) ??
+    null
+  );
+}
+
+function buildAttributesSortKey(
+  r: CatNodeExtendedRow,
+  nodeAttrsByNodeId: NodeSortContext['nodeAttrsByNodeId']
+): string {
+  const attrs: Array<{ attr: string; value: string }> =
+    nodeAttrsByNodeId?.[r.name ?? ''] ?? nodeAttrsByNodeId?.[r.id ?? ''] ?? [];
+  const meaningfulAttrs = attrs.filter(
+    (a) => RACK_ZONE_REGION.has(a.attr) || !DEFAULT_NODE_ATTRS.has(a.attr)
+  );
+  if (meaningfulAttrs.length === 0) return '';
+  const preferred = meaningfulAttrs
+    .filter((a) => RACK_ZONE_REGION.has(a.attr))
+    .sort((a, b) => `${a.attr}=${a.value}`.localeCompare(`${b.attr}=${b.value}`));
+  const rest = meaningfulAttrs
+    .filter((a) => !RACK_ZONE_REGION.has(a.attr))
+    .sort((a, b) => `${a.attr}=${a.value}`.localeCompare(`${b.attr}=${b.value}`));
+  return [...preferred, ...rest].map((a) => `${a.attr}=${a.value}`).join('\n').toLowerCase();
+}
+
+function parseNumericField(raw: string | undefined): number | null {
+  if (raw == null || raw === '') return null;
+  const n = parseFloat(String(raw).replace(/,/g, ''));
+  return Number.isFinite(n) ? n : null;
+}
 
 const DEFAULT_NODES_PAGE_SIZE = 10;
 const NODES_TABLE_COL_COUNT = 11;
@@ -103,35 +164,81 @@ function formatNodeRoleTooltip(nodeRole: string): string {
   return lines.length > 0 ? lines.join('\n') : nodeRole || '—';
 }
 
-function getSortValue(r: CatNodeExtendedRow, key: SortKey): string | number | null {
-  const raw = r[key as keyof CatNodeExtendedRow];
-  if (raw == null || raw === '') return null;
-  if (NUMERIC_KEYS.includes(key)) {
-    const num = key === 'shards' ? parseFloat(String(raw).replace(/,/g, '')) : parsePercent(String(raw));
-    return num != null ? num : null;
+function getSortValue(r: CatNodeExtendedRow, key: SortKey, ctx: NodeSortContext): string | number | null {
+  const allocation = getAllocationForNode(r, ctx.allocationByNodeKey);
+
+  switch (key) {
+    case 'uptime': {
+      const seconds = parseUptimeToSeconds(r.uptime);
+      return seconds > 0 ? seconds : null;
+    }
+    case 'ip': {
+      const ip = String(r.ip ?? '').trim();
+      return ip || null;
+    }
+    case 'shards': {
+      const raw = allocation?.shards ?? r.shards;
+      return parseNumericField(raw);
+    }
+    case 'disk.used_percent': {
+      const raw = allocation?.['disk.percent'] ?? r['disk.used_percent'];
+      return parsePercent(raw);
+    }
+    case 'attributes':
+      return buildAttributesSortKey(r, ctx.nodeAttrsByNodeId) || null;
+    case 'load_1m':
+      return parseNumericField(r.load_1m);
+    case 'cpu':
+    case 'ram.percent':
+    case 'heap.percent':
+      return parsePercent(r[key]);
+    default: {
+      const raw = r[key as keyof CatNodeExtendedRow];
+      if (raw == null || raw === '') return null;
+      if (NUMERIC_SORT_KEYS.includes(key)) {
+        return parseNumericField(String(raw));
+      }
+      return String(raw).toLowerCase();
+    }
   }
-  return String(raw).toLowerCase();
 }
 
-function compareOne(a: CatNodeExtendedRow, b: CatNodeExtendedRow, column: SortKey, direction: SortDirection): number {
+function compareOne(
+  a: CatNodeExtendedRow,
+  b: CatNodeExtendedRow,
+  column: SortKey,
+  direction: SortDirection,
+  ctx: NodeSortContext
+): number {
   const dir = direction === 'desc' ? -1 : 1;
-  const aVal = getSortValue(a, column);
-  const bVal = getSortValue(b, column);
+  const aVal = getSortValue(a, column, ctx);
+  const bVal = getSortValue(b, column, ctx);
   if (aVal == null && bVal == null) return 0;
   if (aVal == null) return 1;
   if (bVal == null) return -1;
-  const cmp =
-    typeof aVal === 'number' && typeof bVal === 'number'
-      ? aVal - bVal
-      : String(aVal).localeCompare(String(bVal), undefined, { numeric: true });
+
+  let cmp: number;
+  if (column === 'ip') {
+    cmp = compareIpAddresses(String(aVal), String(bVal));
+  } else if (typeof aVal === 'number' && typeof bVal === 'number') {
+    cmp = aVal - bVal;
+  } else {
+    cmp = String(aVal).localeCompare(String(bVal), undefined, { numeric: true });
+  }
   return cmp * dir;
 }
 
-function compareNodes(a: CatNodeExtendedRow, b: CatNodeExtendedRow, column: SortKey, direction: SortDirection): number {
-  const primary = compareOne(a, b, column, direction);
+function compareNodes(
+  a: CatNodeExtendedRow,
+  b: CatNodeExtendedRow,
+  column: SortKey,
+  direction: SortDirection,
+  ctx: NodeSortContext
+): number {
+  const primary = compareOne(a, b, column, direction, ctx);
   if (primary !== 0) return primary;
   if (column !== SECONDARY_SORT_COLUMN) {
-    const secondary = compareOne(a, b, SECONDARY_SORT_COLUMN, SECONDARY_SORT_DIRECTION);
+    const secondary = compareOne(a, b, SECONDARY_SORT_COLUMN, SECONDARY_SORT_DIRECTION, ctx);
     if (secondary !== 0) return secondary;
   }
   return 0;
@@ -167,6 +274,7 @@ function buildDiskTooltip(allocation: CatAllocationRow | null): string | undefin
 }
 
 import type { OpenIndexDetailsFn } from '@/types/indexDetail';
+import { NodeCpuInvestigatePanel } from '@/components/nodes/NodeCpuInvestigatePanel';
 
 interface NodesTabContentProps {
   onRefreshStateChange?: (loading: boolean) => void;
@@ -289,9 +397,27 @@ export function NodesTabContent({
     });
   }, [nodes, searchTerm, nodeAttrsByNodeId]);
 
+  const allocationByNodeKey = useMemo(() => {
+    const byKey = new Map<string, CatAllocationRow>();
+    for (const row of catAllocationRows) {
+      const node = String(row.node ?? '').trim();
+      const ip = String(row.ip ?? '').trim();
+      const host = String(row.host ?? '').trim();
+      if (node) byKey.set(`node:${node}`, row);
+      if (ip) byKey.set(`ip:${ip}`, row);
+      if (host) byKey.set(`host:${host}`, row);
+    }
+    return byKey;
+  }, [catAllocationRows]);
+
+  const sortContext = useMemo<NodeSortContext>(
+    () => ({ allocationByNodeKey, nodeAttrsByNodeId: nodeAttrsByNodeId ?? undefined }),
+    [allocationByNodeKey, nodeAttrsByNodeId]
+  );
+
   const sortedNodes = useMemo(() => {
-    return [...filteredNodes].sort((a, b) => compareNodes(a, b, effectiveColumn, effectiveDirection));
-  }, [filteredNodes, effectiveColumn, effectiveDirection]);
+    return [...filteredNodes].sort((a, b) => compareNodes(a, b, effectiveColumn, effectiveDirection, sortContext));
+  }, [filteredNodes, effectiveColumn, effectiveDirection, sortContext]);
 
   const nodesTotalPages = Math.max(1, Math.ceil(sortedNodes.length / Math.max(1, nodesPageSize)));
 
@@ -300,7 +426,7 @@ export function NodesTabContent({
     return sortedNodes.slice(start, start + nodesPageSize);
   }, [sortedNodes, nodesPage, nodesPageSize]);
 
-  useEffect(() => setNodesPage(1), [searchTerm, nodesPageSize]);
+  useEffect(() => setNodesPage(1), [searchTerm, nodesPageSize, sortColumn, sortDirection]);
 
   useEffect(() => {
     setNodesPage((p) => Math.min(p, nodesTotalPages));
@@ -309,7 +435,7 @@ export function NodesTabContent({
   const handleSort = useCallback((column: SortKey) => {
     if (sortColumn !== column) {
       setSortColumn(column);
-      setSortDirection(NUMERIC_KEYS.includes(column) ? 'desc' : 'asc');
+      setSortDirection(DESC_DEFAULT_SORT_KEYS.includes(column) ? 'desc' : 'asc');
       return;
     }
     if (sortDirection === 'asc') {
@@ -416,30 +542,6 @@ export function NodesTabContent({
     if (!selectedNodeName) return null;
     return nodes.find((row) => row.name === selectedNodeName || row.id === selectedNodeName) ?? null;
   }, [nodes, selectedNodeName]);
-
-  const allocationByNodeKey = useMemo(() => {
-    const byKey = new Map<string, CatAllocationRow>();
-    for (const row of catAllocationRows) {
-      const node = String(row.node ?? '').trim();
-      const ip = String(row.ip ?? '').trim();
-      const host = String(row.host ?? '').trim();
-      if (node) byKey.set(`node:${node}`, row);
-      if (ip) byKey.set(`ip:${ip}`, row);
-      if (host) byKey.set(`host:${host}`, row);
-    }
-    return byKey;
-  }, [catAllocationRows]);
-
-  const selectedNodeStats = useMemo(() => {
-    if (!selectedNodeName || !snapshot?.nodeStats?.nodes) return null;
-    const statsEntries = Object.entries(snapshot.nodeStats.nodes);
-    const byName = statsEntries.find(([, node]) => node.name === selectedNodeName)?.[1];
-    if (byName) return byName;
-    if (selectedNodeRow?.id && snapshot.nodeStats.nodes[selectedNodeRow.id]) {
-      return snapshot.nodeStats.nodes[selectedNodeRow.id];
-    }
-    return null;
-  }, [selectedNodeName, selectedNodeRow?.id, snapshot?.nodeStats?.nodes]);
 
   const selectedNodeRates = useMemo(() => {
     if (!selectedNodeName || !snapshot?.nodeStats?.nodes || !prevSnapshot?.nodeStats?.nodes) {
@@ -621,14 +723,32 @@ export function NodesTabContent({
                 CPU: {selectedNodeRow?.cpu ?? '—'}%&nbsp;&nbsp; RAM: {selectedNodeRow?.['ram.percent'] ?? '—'}%&nbsp;&nbsp; Heap: {selectedNodeRow?.['heap.percent'] ?? '—'}%&nbsp;&nbsp; Disk: {selectedNodeRow?.['disk.used_percent'] ?? '—'}%
               </div>
               <div className="mt-1 text-xs text-gray-600 dark:text-gray-300">
-                Disk Used: {selectedNodeRow?.['disk.used'] && selectedNodeRow?.['disk.total'] ? `${selectedNodeRow['disk.used']} / ${selectedNodeRow['disk.total']}` : '—'}
+                Disk: {selectedNodeRow?.['disk.used'] && selectedNodeRow?.['disk.total'] ? `${selectedNodeRow['disk.used']} / ${selectedNodeRow['disk.total']}` : '—'}
               </div>
               <div className="mt-1 text-xs text-gray-600 dark:text-gray-300">
-                Shards: {placementSummary.total} (Primary: {placementSummary.primaries}, Replica: {placementSummary.replicas})
+                Shards on node: {placementSummary.total} ({placementSummary.primaries} primary, {placementSummary.replicas} replica)
               </div>
+              {(liveNodeRates != null || selectedNodeRates.isWarm) && (
+                <div className="mt-1 text-xs text-gray-600 dark:text-gray-300">
+                  Traffic: {(liveNodeRates?.searchRate ?? selectedNodeRates.searchRate).toFixed(1)} searches/s ·{' '}
+                  {(liveNodeRates?.indexingRate ?? selectedNodeRates.indexingRate).toFixed(1)} index ops/s
+                </div>
+              )}
             </div>
+            {selectedNodeRow?.id && activeCluster && (
+              <NodeCpuInvestigatePanel
+                nodeId={selectedNodeRow.id}
+                nodeName={selectedNodeName}
+                cpuPercent={selectedNodeRow.cpu}
+                load1m={selectedNodeRow.load_1m}
+                searchRate={liveNodeRates?.searchRate ?? selectedNodeRates.searchRate}
+                indexingRate={liveNodeRates?.indexingRate ?? selectedNodeRates.indexingRate}
+                activeCluster={activeCluster}
+                isClusterUnreachable={isClusterUnreachable}
+              />
+            )}
             <div className="rounded border border-gray-200 bg-gray-50 p-3 text-sm dark:border-gray-600 dark:bg-gray-700/40">
-              <div className="font-medium text-gray-900 dark:text-gray-100">Quick Placement Summary</div>
+              <div className="font-medium text-gray-900 dark:text-gray-100">Indices on this node</div>
               {selectedNodeShardsLoading ? (
                 <div className="mt-2 text-xs text-gray-500 dark:text-gray-400">Loading shard placement...</div>
               ) : selectedNodeShardsError ? (
@@ -636,7 +756,7 @@ export function NodesTabContent({
               ) : (
                 <>
                   <div className="mt-1 text-xs text-gray-600 dark:text-gray-300">
-                    <p>Top indices on this node:</p>
+                    <p>Most shards:</p>
                     {placementSummary.topIndices.length > 0 ? (
                       <div className="mt-1 space-y-0.5">
                         {placementSummary.topIndices.map((item) => (
@@ -662,39 +782,16 @@ export function NodesTabContent({
                     )}
                   </div>
                   <div className="mt-1 text-xs text-gray-600 dark:text-gray-300">
-                    Estimated store on node: {placementSummary.storeBytes > 0 ? formatBytes(placementSummary.storeBytes) : '—'}
+                    Data size on node: {placementSummary.storeBytes > 0 ? formatBytes(placementSummary.storeBytes) : '—'}
                   </div>
                 </>
               )}
             </div>
-            {selectedNodeStats && (
-              <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-              <div className="rounded border border-gray-200 bg-gray-50 p-3 text-sm dark:border-gray-600 dark:bg-gray-700/40">
-                <p className="text-xs text-gray-500 dark:text-gray-400">Indexing rate</p>
-                <p className="mt-1 font-mono text-gray-900 dark:text-gray-100">
-                  {liveNodeRates != null || selectedNodeRates.isWarm
-                    ? `${(liveNodeRates?.indexingRate ?? selectedNodeRates.indexingRate).toFixed(2)}/sec`
-                    : '—'}
-                </p>
-              </div>
-              <div className="rounded border border-gray-200 bg-gray-50 p-3 text-sm dark:border-gray-600 dark:bg-gray-700/40">
-                <p className="text-xs text-gray-500 dark:text-gray-400">Search rate</p>
-                <p className="mt-1 font-mono text-gray-900 dark:text-gray-100">
-                  {liveNodeRates != null || selectedNodeRates.isWarm
-                    ? `${(liveNodeRates?.searchRate ?? selectedNodeRates.searchRate).toFixed(2)}/sec`
-                    : '—'}
-                </p>
-              </div>
-              </div>
-            )}
-            <div className="rounded border border-gray-200 bg-gray-50 p-3 text-sm dark:border-gray-600 dark:bg-gray-700/40">
-              <div className="text-xs text-gray-500 dark:text-gray-400">Node allocation summary</div>
-              <div className="mt-1 text-sm text-gray-700 dark:text-gray-200">
-                Total shards: {placementSummary.total} · Primary: {placementSummary.primaries} · Replica: {placementSummary.replicas}
-              </div>
-            </div>
-            <div className="rounded border border-gray-200 bg-gray-50 p-3 text-sm dark:border-gray-600 dark:bg-gray-700/40">
-              <div className="text-xs text-gray-500 dark:text-gray-400">Attributes</div>
+            <details className="rounded border border-gray-200 bg-gray-50 p-3 text-sm dark:border-gray-600 dark:bg-gray-700/40">
+              <summary className="cursor-pointer text-xs font-medium text-gray-500 dark:text-gray-400">
+                Advanced node attributes
+              </summary>
+              <div className="mt-2">
               {(() => {
                 const attrs = nodeAttrsByNodeId?.[selectedNodeRow?.name ?? ''] ?? nodeAttrsByNodeId?.[selectedNodeRow?.id ?? ''] ?? [];
                 if (!attrs.length) return <div className="mt-1 text-xs text-gray-500 dark:text-gray-400">No attributes found.</div>;
@@ -708,7 +805,8 @@ export function NodesTabContent({
                   </div>
                 );
               })()}
-            </div>
+              </div>
+            </details>
           </div>
         </div>
       </div>
@@ -819,28 +917,28 @@ export function NodesTabContent({
             <thead>
               <tr className="border-b-2 border-gray-300 bg-gray-100 dark:border-gray-600 dark:bg-gray-800">
                 {([
-                  { label: 'Name', sortKey: 'name' as SortKey, sortable: true },
-                  { label: 'Uptime', sortKey: 'name' as SortKey, sortable: false },
-                  { label: 'IP', sortKey: 'ip' as SortKey, sortable: false },
-                  { label: 'Shards', sortKey: 'shards' as SortKey, sortable: false },
-                  { label: 'Node Role', sortKey: 'node.role' as SortKey, sortable: true },
-                  { label: 'Attributes', sortKey: 'name' as SortKey, sortable: false },
-                  { label: 'Load', sortKey: 'load_1m' as SortKey, sortable: false },
-                  { label: 'CPU usage', sortKey: 'cpu' as SortKey, sortable: false },
-                  { label: 'System RAM', sortKey: 'ram.percent' as SortKey, sortable: false },
-                  { label: 'JVM Heap', sortKey: 'heap.percent' as SortKey, sortable: false },
-                  { label: 'Disk', sortKey: 'disk.used_percent' as SortKey, sortable: false }
-                ] as const).map(({ label, sortKey, sortable }) => (
+                  { label: 'Name', sortKey: 'name' as SortKey },
+                  { label: 'Uptime', sortKey: 'uptime' as SortKey },
+                  { label: 'IP', sortKey: 'ip' as SortKey },
+                  { label: 'Shards', sortKey: 'shards' as SortKey },
+                  { label: 'Node Role', sortKey: 'node.role' as SortKey },
+                  { label: 'Attributes', sortKey: 'attributes' as SortKey },
+                  { label: 'Load', sortKey: 'load_1m' as SortKey },
+                  { label: 'CPU usage', sortKey: 'cpu' as SortKey },
+                  { label: 'System RAM', sortKey: 'ram.percent' as SortKey },
+                  { label: 'JVM Heap', sortKey: 'heap.percent' as SortKey },
+                  { label: 'Disk', sortKey: 'disk.used_percent' as SortKey }
+                ] as const).map(({ label, sortKey }) => (
                   <th
                     key={label}
-                    className={`px-3 py-2.5 font-bold text-gray-900 dark:text-gray-50 tab-content-value ${sortable ? 'cursor-pointer select-none hover:bg-gray-200 dark:hover:bg-gray-700' : ''} ${label === 'Shards' ? 'text-right' : 'text-left'} ${['CPU usage', 'System RAM', 'JVM Heap', 'Disk'].includes(label) ? 'min-w-[100px]' : ''}`}
-                    onClick={sortable ? () => handleSort(sortKey) : undefined}
+                    className={`px-3 py-2.5 font-bold text-gray-900 dark:text-gray-50 tab-content-value cursor-pointer select-none hover:bg-gray-200 dark:hover:bg-gray-700 ${label === 'Shards' ? 'text-right' : 'text-left'} ${['CPU usage', 'System RAM', 'JVM Heap', 'Disk'].includes(label) ? 'min-w-[100px]' : ''}`}
+                    onClick={() => handleSort(sortKey)}
                   >
                     <span className="inline-flex items-center gap-0.5">
                       {label}
-                      {sortable && (effectiveColumn === sortKey
+                      {effectiveColumn === sortKey
                         ? (effectiveDirection === 'asc' ? <ArrowUp className="h-3 w-3" /> : effectiveDirection === 'desc' ? <ArrowDown className="h-3 w-3" /> : <ArrowUpDown className="h-3 w-3 opacity-50" />)
-                        : <ArrowUpDown className="h-3 w-3 opacity-40" />)}
+                        : <ArrowUpDown className="h-3 w-3 opacity-40" />}
                     </span>
                   </th>
                 ))}

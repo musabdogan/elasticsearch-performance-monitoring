@@ -1,5 +1,5 @@
 import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type ReactNode } from 'react';
-import { ChevronDown, ChevronRight, Download, GripVertical, RefreshCw, X, ArrowDown, ArrowUp } from 'lucide-react';
+import { ChevronDown, ChevronLeft, ChevronRight, Download, GripVertical, RefreshCw, X, ArrowDown, ArrowUp } from 'lucide-react';
 import { CodeBlockWithCopy } from '@/components/ui/CodeBlockWithCopy';
 import { IndexDataFieldsPanel } from '@/components/index/IndexDataFieldsPanel';
 import type { ClusterConnection } from '@/types/app';
@@ -9,7 +9,7 @@ import {
   setFieldDragPayload,
   type FieldDragPayload
 } from '@/hooks/useDocumentColumns';
-import { DOCUMENT_PAGE_SIZE_OPTIONS, formatDocumentTotalLabel } from '@/utils/indexSearchQuery';
+import { DOCUMENT_PAGE_SIZE_OPTIONS, formatDocumentPageSizeTopLabel, formatDocumentTotalLabel } from '@/utils/indexSearchQuery';
 import {
   downloadIndexDataCsv,
   downloadIndexDataJson,
@@ -118,6 +118,8 @@ export type DocumentSearchWorkspaceProps = {
   loading: boolean;
   error: string | null;
   forbidden: boolean;
+  /** When true, hide the document table (e.g. time chart histogram-only mode). */
+  hideDocumentResults?: boolean;
   searchSection?: ReactNode;
   pagination?: DocumentSearchPagination;
   availableFields: string[];
@@ -153,6 +155,7 @@ export function DocumentSearchWorkspace({
   loading,
   error,
   forbidden,
+  hideDocumentResults = false,
   searchSection,
   pagination,
   availableFields,
@@ -179,6 +182,16 @@ export function DocumentSearchWorkspace({
   const [tableDragOver, setTableDragOver] = useState(false);
   const [downloadOpen, setDownloadOpen] = useState(false);
   const downloadRef = useRef<HTMLDivElement>(null);
+  const [showTookLoading, setShowTookLoading] = useState(false);
+
+  useEffect(() => {
+    if (!loading) {
+      setShowTookLoading(false);
+      return;
+    }
+    const timer = window.setTimeout(() => setShowTookLoading(true), 400);
+    return () => window.clearTimeout(timer);
+  }, [loading]);
 
   useEffect(() => {
     setExpandedId(null);
@@ -223,6 +236,8 @@ export function DocumentSearchWorkspace({
 
   const showingEnd = from + hits.length;
   const totalLabel = formatDocumentTotalLabel(total, totalIsLowerBound);
+  /** Show loading hint immediately when there are no results yet; otherwise defer 400ms to avoid flicker. */
+  const showLoadingHint = loading && (showTookLoading || total == null);
 
   const onHeaderDragOver = (e: DragEvent, index: number) => {
     e.preventDefault();
@@ -236,7 +251,8 @@ export function DocumentSearchWorkspace({
     setDropTargetIndex(selectedColumns.length);
   };
 
-  const showResultsPanel = !forbidden && (loading || hits.length > 0 || total != null);
+  const showResultsPanel =
+    !forbidden && !hideDocumentResults && (loading || hits.length > 0 || total != null);
 
   return (
     <div className="space-y-3 text-sm">
@@ -274,9 +290,9 @@ export function DocumentSearchWorkspace({
       {error && !forbidden && <p className="text-xs text-red-600 dark:text-red-400">{error}</p>}
 
       {loading && hits.length === 0 && !showResultsPanel && (
-        <div className="flex items-center gap-2 text-sm text-gray-500">
-          <RefreshCw className="h-4 w-4 animate-spin" />
-          Loading documents…
+        <div className="flex items-center gap-2 text-sm text-gray-500 dark:text-gray-400">
+          <RefreshCw className="h-4 w-4 animate-spin" aria-hidden />
+          loading…
         </div>
       )}
 
@@ -303,51 +319,67 @@ export function DocumentSearchWorkspace({
                 <span className="border-b-2 border-blue-600 pb-0.5 text-sm font-semibold text-gray-900 dark:text-gray-100">
                   Documents ({totalLabel})
                 </span>
-                {took != null && (
+                {showLoadingHint ? (
+                  <span className="inline-flex items-center gap-1 text-sm text-gray-500 dark:text-gray-400">
+                    <RefreshCw className="h-3.5 w-3.5 animate-spin" aria-hidden />
+                    loading…
+                  </span>
+                ) : took != null ? (
                   <span className="text-sm text-gray-500 dark:text-gray-400">{took} ms</span>
-                )}
+                ) : null}
                 {hits.length > 0 && (
                   <span className="text-sm text-gray-500 dark:text-gray-400">
                     {from + 1}–{showingEnd}
-                    {totalPages != null ? ` · Page ${page} / ${totalPages}` : ''}
                   </span>
                 )}
               </div>
               {pagination && (
-                <div className="flex flex-wrap items-center gap-2 text-sm text-gray-600 dark:text-gray-400">
-                  <span>Rows:</span>
-                  {DOCUMENT_PAGE_SIZE_OPTIONS.map(({ value, label }) => (
-                    <button
-                      key={value}
-                      type="button"
-                      onClick={() => pagination.onSizeChange(value)}
-                      className={`rounded border px-2 py-0.5 font-mono ${
-                        pagination.size === value
-                          ? 'border-blue-500 bg-blue-50 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300'
-                          : 'border-gray-300 dark:border-gray-600 hover:bg-gray-100 dark:hover:bg-gray-700'
-                      }`}
+                <div className="flex flex-wrap items-center gap-3 text-sm text-gray-600 dark:text-gray-400">
+                  {totalPages != null && (
+                    <div className="inline-flex items-center gap-1">
+                      <button
+                        type="button"
+                        onClick={pagination.onPrev}
+                        disabled={!pagination.canPrev || loading}
+                        className="inline-flex items-center justify-center rounded p-1 text-gray-600 transition hover:bg-gray-200 disabled:pointer-events-none disabled:opacity-40 dark:text-gray-300 dark:hover:bg-gray-700"
+                        aria-label="Previous page"
+                      >
+                        <ChevronLeft className="h-4 w-4" />
+                      </button>
+                      <span className="min-w-[6.5rem] text-center font-medium tabular-nums text-gray-700 dark:text-gray-300">
+                        Page {page} of {totalPages}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={pagination.onNext}
+                        disabled={!pagination.canNext || loading}
+                        className="inline-flex items-center justify-center rounded p-1 text-gray-600 transition hover:bg-gray-200 disabled:pointer-events-none disabled:opacity-40 dark:text-gray-300 dark:hover:bg-gray-700"
+                        aria-label="Next page"
+                      >
+                        <ChevronRight className="h-4 w-4" />
+                      </button>
+                    </div>
+                  )}
+                  <div className="relative">
+                    <select
+                      id="document-page-size"
+                      value={pagination.size}
+                      onChange={(e) => pagination.onSizeChange(Number(e.target.value))}
+                      disabled={loading}
+                      aria-label="Results per page"
+                      className="appearance-none rounded-md border border-gray-300 bg-transparent py-1.5 pl-3 pr-8 text-sm text-gray-700 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:opacity-40 dark:border-gray-600 dark:text-gray-300"
                     >
-                      {label}
-                    </button>
-                  ))}
-                  <span className="flex gap-2">
-                    <button
-                      type="button"
-                      onClick={pagination.onPrev}
-                      disabled={!pagination.canPrev || loading}
-                      className="rounded border border-gray-300 px-2 py-0.5 disabled:opacity-40 dark:border-gray-600"
-                    >
-                      Prev
-                    </button>
-                    <button
-                      type="button"
-                      onClick={pagination.onNext}
-                      disabled={!pagination.canNext || loading}
-                      className="rounded border border-gray-300 px-2 py-0.5 disabled:opacity-40 dark:border-gray-600"
-                    >
-                      Next
-                    </button>
-                  </span>
+                      {DOCUMENT_PAGE_SIZE_OPTIONS.map(({ value }) => (
+                        <option key={value} value={value}>
+                          {formatDocumentPageSizeTopLabel(value)}
+                        </option>
+                      ))}
+                    </select>
+                    <ChevronDown
+                      className="pointer-events-none absolute right-2 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-500 dark:text-gray-400"
+                      aria-hidden
+                    />
+                  </div>
                 </div>
               )}
             </div>
@@ -478,7 +510,7 @@ export function DocumentSearchWorkspace({
                         colSpan={Math.max(1, selectedColumns.length)}
                         className="px-3 py-10 text-center text-sm text-gray-500 dark:text-gray-400"
                       >
-                        {loading ? 'Loading documents…' : 'No documents found.'}
+                        {loading ? 'loading…' : 'No documents found.'}
                       </td>
                     </tr>
                   ) : (

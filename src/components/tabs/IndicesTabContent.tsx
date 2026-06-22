@@ -52,6 +52,8 @@ import {
   ArrowDown,
   ArrowUpDown
 } from 'lucide-react';
+import type { DiagnosisNavigation } from '@/types/diagnosis';
+import { ActiveSearchesSection } from '@/components/cluster/ActiveSearchesSection';
 
 const INDICES_PERMISSION_MESSAGE =
   'To view the index catalog, ensure your user has monitor or view_index_metadata cluster privilege.';
@@ -971,12 +973,18 @@ export function IndicesTabContent({
   onRefreshStateChange,
   onOpenIndexDetails,
   onOpenNodeDetails,
-  onOpenInQuery
+  onOpenInQuery,
+  diagnosisNav,
+  onDiagnosisNavConsumed,
+  onOpenIndexDiagnosis
 }: {
   onRefreshStateChange?: (loading: boolean) => void;
   onOpenIndexDetails?: OpenIndexDetailsFn;
   onOpenNodeDetails?: (nodeName: string) => void;
   onOpenInQuery?: (indexName: string) => void;
+  diagnosisNav?: DiagnosisNavigation | null;
+  onDiagnosisNavConsumed?: () => void;
+  onOpenIndexDiagnosis?: (indexName: string) => void;
 } = {}) {
   const { activeCluster, isClusterUnreachable } = useMonitoring();
   const activeClusterRef = useRef(activeCluster);
@@ -2634,9 +2642,17 @@ export function IndicesTabContent({
     );
   }
 
-  if (forbidden || (error && catalog.length === 0 && indicesExpanded)) {
+  const catalogForbidden = forbidden || (error != null && catalog.length === 0 && indicesExpanded);
+
+  if (catalogForbidden) {
     return (
-      <div className="rounded-lg border border-gray-200 bg-white dark:border-gray-600 dark:bg-gray-800/50 shadow-sm max-h-[85vh] min-h-0 flex flex-col overflow-hidden">
+      <div className="flex flex-col gap-4">
+        <ActiveSearchesSection
+          diagnosisNav={diagnosisNav}
+          onDiagnosisNavConsumed={onDiagnosisNavConsumed}
+          onOpenIndexDiagnosis={onOpenIndexDiagnosis}
+        />
+        <div className="rounded-lg border border-gray-200 bg-white dark:border-gray-600 dark:bg-gray-800/50 shadow-sm max-h-[85vh] min-h-0 flex flex-col overflow-hidden">
         <div className="p-4 text-sm text-gray-700 dark:text-gray-300 relative flex flex-col min-h-0 overflow-y-auto">
           <div className="border border-gray-200 dark:border-gray-600 rounded-lg overflow-hidden">
             <button
@@ -2677,12 +2693,19 @@ export function IndicesTabContent({
             )}
           </div>
         </div>
+        </div>
       </div>
     );
   }
 
   return (
     <div className="flex flex-col gap-4">
+      <ActiveSearchesSection
+        diagnosisNav={diagnosisNav}
+        onDiagnosisNavConsumed={onDiagnosisNavConsumed}
+        onOpenIndexDiagnosis={onOpenIndexDiagnosis}
+      />
+
       <IndexExplorerSection
         activeCluster={activeCluster}
         isClusterUnreachable={isClusterUnreachable}

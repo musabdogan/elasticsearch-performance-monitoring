@@ -30,6 +30,7 @@ interface AlertManagementProps {
   onUpdateSettings?: (updates: Partial<AlertSettings>) => void;
   onUpdateRule?: (ruleId: string, updates: Partial<AlertRule>) => void;
   onResetToDefaults?: () => void;
+  onOpenActiveSearches?: () => void;
   isPanel?: boolean; // New prop for panel mode
 }
 
@@ -64,6 +65,7 @@ const AlertManagement = memo<AlertManagementProps>(({
   onUpdateSettings,
   onUpdateRule,
   onResetToDefaults,
+  onOpenActiveSearches,
   isPanel = false
 }) => {
   const backdropMouseDownRef = useRef(false);
@@ -397,7 +399,11 @@ const AlertManagement = memo<AlertManagementProps>(({
           {renderTabContent()}
         </div>
       </div>
-      <AlertDetailModal alert={selectedAlert} onClose={() => setSelectedAlert(null)} />
+      <AlertDetailModal
+        alert={selectedAlert}
+        onClose={() => setSelectedAlert(null)}
+        onOpenActiveSearches={onOpenActiveSearches}
+      />
       </>
     );
   }

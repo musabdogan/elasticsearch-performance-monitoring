@@ -42,6 +42,7 @@ import type {
   SnapshotRepositoryVerifyResponse,
   SnapshotStatusResponse
 } from '@/types/api';
+import type { SearchTasksApiResponse } from '@/types/diagnosis';
 import type { ClusterConnection } from '@/types/app';
 import { clusterKeyFromBaseUrl, runClusterGovernedFetch } from '@/utils/clusterRequestGovernor';
 
@@ -885,6 +886,117 @@ export async function searchIndexDocuments(
     throw new Error(`Search ${response.status} ${response.statusText}${text ? ` - ${text}` : ''}`);
   }
   return (await response.json()) as SearchResponse;
+}
+
+/** GET _tasks — in-flight search tasks (cluster-wide). */
+export async function getSearchTasks(
+  cluster: ClusterConnection,
+  signal?: AbortSignal | null
+): Promise<SearchTasksApiResponse> {
+  const response = await clusterRequest(cluster, apiConfig.endpoints.searchTasks, { signal });
+  if (!response.ok) {
+    const text = await response.text().catch(() => '');
+    throw new Error(`Search tasks ${response.status} ${response.statusText}${text ? ` - ${text}` : ''}`);
+  }
+  return (await response.json()) as SearchTasksApiResponse;
+}
+
+/** POST _tasks/{taskId}/_cancel — cancel a running task. */
+export async function cancelSearchTask(
+  cluster: ClusterConnection,
+  taskId: string,
+  signal?: AbortSignal | null
+): Promise<{ completed?: boolean }> {
+  const encoded = encodeURIComponent(taskId);
+  const response = await clusterRequest(cluster, `/_tasks/${encoded}/_cancel`, {
+    method: 'POST',
+    signal
+  });
+  const text = await response.text().catch(() => '');
+  if (!response.ok) {
+    throw new Error(text || `Cancel task ${response.status} ${response.statusText}`);
+  }
+  try {
+    return JSON.parse(text) as { completed?: boolean };
+  } catch {
+    return { completed: true };
+  }
+}
+
+/** GET _nodes/{nodeId}/hot_threads — plain text stack traces. */
+export async function getNodeHotThreads(
+  cluster: ClusterConnection,
+  nodeId: string,
+  signal?: AbortSignal | null
+): Promise<string> {
+  const path = `/_nodes/${encodeURIComponent(nodeId)}/hot_threads?threads=3&ignore_idle_threads=true`;
+  const response = await clusterRequest(cluster, path, { signal });
+  if (!response.ok) {
+    const text = await response.text().catch(() => '');
+    throw new Error(`Hot threads ${response.status} ${response.statusText}${text ? ` - ${text}` : ''}`);
+  }
+  return response.text();
+}
+
+export type IndexSearchShardStats = {
+  queryTotal: number;
+  queryTimeMs: number;
+  fetchTotal: number;
+  fetchTimeMs: number;
+};
+
+export type IndexSearchStatsDetailed = {
+  total: IndexSearchShardStats;
+  shards: IndexSearchShardStats[];
+};
+
+/** GET /{index}/_stats/search?level=shards — query/fetch breakdown per shard. */
+export async function getIndexSearchStatsDetailed(
+  cluster: ClusterConnection,
+  index: string,
+  signal?: AbortSignal | null
+): Promise<IndexSearchStatsDetailed | null> {
+  const filter =
+    'level=shards&metric=search&filter_path=indices.*.total.search.query_total,indices.*.total.search.query_time_in_millis,indices.*.total.search.fetch_total,indices.*.total.search.fetch_time_in_millis,indices.*.shards.*.*.search';
+  const path = `/${encodeURIComponent(index)}/_stats/search?${filter}`;
+  const response = await clusterRequest(cluster, path, { signal });
+  if (response.status === 404) return null;
+  if (!response.ok) {
+    const text = await response.text().catch(() => '');
+    throw new Error(`Index search stats ${response.status} ${response.statusText}${text ? ` - ${text}` : ''}`);
+  }
+  const data = (await response.json()) as {
+    indices?: Record<
+      string,
+      {
+        total?: { search?: Record<string, number> };
+        shards?: Record<string, Array<{ search?: Record<string, number> }>>;
+      }
+    >;
+  };
+  const entry = data.indices ? Object.values(data.indices)[0] : undefined;
+  if (!entry) return null;
+
+  const readSearch = (s?: Record<string, number>): IndexSearchShardStats => ({
+    queryTotal: s?.query_total ?? 0,
+    queryTimeMs: s?.query_time_in_millis ?? 0,
+    fetchTotal: s?.fetch_total ?? 0,
+    fetchTimeMs: s?.fetch_time_in_millis ?? 0
+  });
+
+  const shards: IndexSearchShardStats[] = [];
+  if (entry.shards) {
+    for (const arr of Object.values(entry.shards)) {
+      for (const shard of arr) {
+        shards.push(readSearch(shard.search));
+      }
+    }
+  }
+
+  return {
+    total: readSearch(entry.total?.search),
+    shards
+  };
 }
 
 /**

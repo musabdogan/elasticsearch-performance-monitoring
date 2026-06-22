@@ -3,6 +3,7 @@ import { RefreshCw, X } from 'lucide-react';
 import { useMonitoring } from '@/context/MonitoringProvider';
 import { CodeBlockWithCopy } from '@/components/ui/CodeBlockWithCopy';
 import { IndexDataTab } from './IndexDataTab';
+import { IndexDiagnosisPanel } from './IndexDiagnosisPanel';
 import type { IndexDetailTab } from '@/types/indexDetail';
 import type {
   CatAliasRow,
@@ -36,10 +37,11 @@ const SHARD_ALLOCATION_VISIBLE = 6;
 
 const INDEX_DETAIL_TABS: { id: IndexDetailTab; label: string }[] = [
   { id: 'overview', label: 'Overview' },
-  { id: 'data', label: 'Data' },
   { id: 'mappings', label: 'Mappings' },
   { id: 'settings', label: 'Settings' },
-  { id: 'ilm', label: 'ILM' }
+  { id: 'ilm', label: 'ILM' },
+  { id: 'data', label: 'Data' },
+  { id: 'diagnosis', label: 'Slow search' }
 ];
 
 type MappingsResponse = Record<string, { mappings?: { properties?: Record<string, unknown> } }>;
@@ -47,6 +49,7 @@ type MappingsResponse = Record<string, { mappings?: { properties?: Record<string
 interface IndexDetailModalProps {
   indexName: string;
   initialTab?: IndexDetailTab;
+  searchLatencyFromPoll?: number | null;
   catalogRow?: CatIndexRow;
   onClose: () => void;
   onOpenNodeDetails?: (nodeName: string) => void;
@@ -434,6 +437,7 @@ export function IndexDetailModal({
   }, [indexName, activeCluster, isClusterUnreachable]);
 
   const handleEscape = useCallback(() => {
+    // Nested overlays (e.g. Query details in Slow search) use useNestedEscapeClose — see modal-escape-stack.mdc
     if (fieldPopoverMode) {
       setFieldPopoverMode(null);
     } else if (aliasesOpen) {
@@ -1123,6 +1127,16 @@ export function IndexDetailModal({
 
             {activeCluster && !isClusterUnreachable && activeTab === 'settings' && (!indexDetails || !indexDetails[indexName]) && !detailLoading && (
               <p className="text-sm text-gray-500">No settings data.</p>
+            )}
+
+            {activeCluster && !isClusterUnreachable && activeTab === 'diagnosis' && (
+              <IndexDiagnosisPanel
+                indexName={indexName}
+                indexAliases={indexAliases}
+                activeCluster={activeCluster}
+                isClusterUnreachable={isClusterUnreachable}
+                isActive={activeTab === 'diagnosis'}
+              />
             )}
 
             {activeCluster && !isClusterUnreachable && activeTab === 'ilm' && (

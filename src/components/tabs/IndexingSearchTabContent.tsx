@@ -6,6 +6,7 @@ import IndexTable from '@/components/data/IndexTable';
 import NodeTable from '@/components/data/NodeTable';
 import { InfoPopup } from '@/components/ui/InfoPopup';
 import { formatRelativeTime } from '@/utils/format';
+import type { OpenIndexDetailsFn } from '@/types/indexDetail';
 
 const INDEXING_POLL_OPTIONS = [
   { label: 'Off', value: 0 },
@@ -15,11 +16,16 @@ const INDEXING_POLL_OPTIONS = [
 ];
 
 interface IndexingSearchTabContentProps {
-  onOpenIndexDetails: (indexName: string) => void;
+  onOpenIndexDetails: OpenIndexDetailsFn;
+  onOpenIndexDiagnosis?: (indexName: string, searchLatencyMs: number) => void;
   onOpenNodeDetails?: (nodeName: string) => void;
 }
 
-export function IndexingSearchTabContent({ onOpenIndexDetails, onOpenNodeDetails }: IndexingSearchTabContentProps) {
+export function IndexingSearchTabContent({
+  onOpenIndexDetails,
+  onOpenIndexDiagnosis,
+  onOpenNodeDetails
+}: IndexingSearchTabContentProps) {
   const {
     snapshot,
     prevSnapshot,
@@ -127,6 +133,7 @@ export function IndexingSearchTabContent({ onOpenIndexDetails, onOpenNodeDetails
             prevFetchedAt={prevSnapshot?.fetchedAt}
             pollIntervalMs={pollInterval}
             onOpenIndexDetails={onOpenIndexDetails}
+            onOpenIndexDiagnosis={onOpenIndexDiagnosis}
           />
         </div>
         <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">

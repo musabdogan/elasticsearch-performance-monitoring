@@ -7,10 +7,25 @@ export type SortRule = {
   order: 'asc' | 'desc';
 };
 
-export const DEFAULT_SIMPLE_QUERY = '*';
+export const DEFAULT_SIMPLE_QUERY = '';
 export const DEFAULT_SIZE = 10;
 /** Wildcard pattern matching all indices when no pattern is set. */
 export const ALL_INDICES_PATTERN = '*';
+
+export function pickIndexWithMostDocuments(
+  indices: Array<{ index?: string; 'docs.count'?: string }> | undefined
+): string | null {
+  if (!indices?.length) return null;
+  let best: { name: string; count: number } | null = null;
+  for (const row of indices) {
+    const name = row.index?.trim();
+    if (!name) continue;
+    const count = parseInt(String(row['docs.count'] ?? '').replace(/,/g, ''), 10);
+    if (!Number.isFinite(count)) continue;
+    if (!best || count > best.count) best = { name, count };
+  }
+  return best?.name ?? null;
+}
 
 export function normalizeQueryIndexPattern(pattern: string): string {
   const trimmed = pattern.trim();
@@ -30,16 +45,38 @@ export function isConcreteIndexPattern(pattern: string): boolean {
   return !/[*,?]/.test(p) && !p.includes(',');
 }
 
-export function applyTrackTotalHitsPolicy(
-  body: Record<string, unknown>,
-  indexPattern: string
-): Record<string, unknown> {
-  if (isConcreteIndexPattern(indexPattern)) {
-    return { ...body, track_total_hits: true };
+/**
+ * Filter index names in the Query picker — plain text uses substring match;
+ * patterns with * or ? use Elasticsearch-style wildcards (anchored to full name).
+ */
+export function matchesQueryIndexFilter(indexName: string, filter: string): boolean {
+  const name = indexName.trim();
+  const q = filter.trim();
+  if (!q) return true;
+  if (!name) return false;
+
+  if (!q.includes('*') && !q.includes('?')) {
+    const nameLower = name.toLowerCase();
+    const qLower = q.toLowerCase();
+    if (nameLower.includes(qLower)) return true;
+    // Prefix typing: "consent" matches "consents", "consents-v2", etc.
+    if (nameLower.startsWith(qLower) || qLower.startsWith(nameLower)) return true;
+    return false;
   }
-  const next = { ...body };
-  delete next.track_total_hits;
-  return next;
+
+  let regexSource = '^';
+  for (const ch of q) {
+    if (ch === '*') regexSource += '.*';
+    else if (ch === '?') regexSource += '.';
+    else regexSource += ch.replace(/[\\^$.*+?()[\]{}|]/g, '\\$&');
+  }
+  regexSource += '$';
+
+  try {
+    return new RegExp(regexSource, 'i').test(name);
+  } catch {
+    return name.toLowerCase().includes(q.toLowerCase());
+  }
 }
 
 export function buildSortClause(rules: SortRule[]): unknown[] {
@@ -88,7 +125,6 @@ export function buildAdvancedSearchBody(
   body.from = Math.max(0, from);
   const sortClause = buildSortClause(sort);
   if (sortClause.length > 0) body.sort = sortClause;
-  delete body.track_total_hits;
   return { body, error: null };
 }
 
@@ -109,7 +145,7 @@ export function extractSimpleQueryFromBody(body: Record<string, unknown>): strin
     const q = (qs as Record<string, unknown>).query;
     if (typeof q === 'string') return q;
   }
-  if ('match_all' in (query as Record<string, unknown>)) return '*';
+  if ('match_all' in (query as Record<string, unknown>)) return '';
   return null;
 }
 

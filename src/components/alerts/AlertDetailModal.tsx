@@ -7,6 +7,7 @@ import { formatAlertOpenedAt, formatAlertDuration } from '../../utils/format';
 interface AlertDetailModalProps {
   alert: AlertInstance | null;
   onClose: () => void;
+  onOpenActiveSearches?: () => void;
 }
 
 function CodeBlockWithCopy({ text }: { text: string }) {
@@ -38,7 +39,7 @@ function CodeBlockWithCopy({ text }: { text: string }) {
   );
 }
 
-const AlertDetailModal = memo<AlertDetailModalProps>(({ alert, onClose }) => {
+const AlertDetailModal = memo<AlertDetailModalProps>(({ alert, onClose, onOpenActiveSearches }) => {
   const backdropMouseDownRef = useRef(false);
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -156,6 +157,32 @@ const AlertDetailModal = memo<AlertDetailModalProps>(({ alert, onClose }) => {
           <section>
             <h4 className="font-medium text-sm text-gray-900 dark:text-gray-100 mb-2">What was detected</h4>
             <p className="text-sm text-gray-600 dark:text-gray-300 leading-relaxed">{whatWasDetectedWithIndices}</p>
+            {alert.diagnosisContext && (
+              <div className="mt-2 text-xs text-gray-500 dark:text-gray-400 space-y-0.5">
+                {alert.diagnosisContext.searchActiveTotal != null && (
+                  <p>Search threads active: {alert.diagnosisContext.searchActiveTotal}</p>
+                )}
+                {alert.diagnosisContext.searchQueueMax != null && alert.diagnosisContext.searchQueueMax > 0 && (
+                  <p>Search queue: {alert.diagnosisContext.searchQueueMax}</p>
+                )}
+                {alert.diagnosisContext.dominantPool && (
+                  <p>Dominant pool: {alert.diagnosisContext.dominantPool}</p>
+                )}
+              </div>
+            )}
+            {onOpenActiveSearches &&
+              ['high-cpu-usage', 'high-cpu-load', 'slow-search-critical'].includes(alert.ruleId) && (
+                <button
+                  type="button"
+                  className="mt-2 text-sm text-blue-600 dark:text-blue-400 hover:underline"
+                  onClick={() => {
+                    onOpenActiveSearches();
+                    onClose();
+                  }}
+                >
+                  Open Active searches
+                </button>
+              )}
           </section>
 
           {/* Affected resources */}

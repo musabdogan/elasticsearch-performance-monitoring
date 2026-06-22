@@ -52,6 +52,7 @@ export const apiConfig = {
     catNodesExtended: '/_cat/nodes?v&format=json&h=ip,id,name,version,heap.percent,heap.current,heap.max,ram.percent,ram.current,ram.max,node.role,master,cpu,load_1m,load_5m,load_15m,disk.used_percent,disk.used,disk.total,shards,uptime&full_id=true',
     catNodeAttrs: '/_cat/nodeattrs?v&format=json',
     catThreadPool: '/_cat/thread_pool?v&format=json',
+    searchTasks: '/_tasks?actions=*search*&detailed=true&group_by=parents',
     nodesStatsExtended: '/_nodes/stats/transport,http,breaker,fs,indices?filter_path=nodes.*.name,nodes.*.transport,nodes.*.http,nodes.*.breakers,nodes.*.fs,nodes.*.indices.indexing',
     /** Health API (ES 8.x+). Default verbose output (includes details/diagnosis). Requires monitor cluster privilege. */
     healthReport: '/_health_report',

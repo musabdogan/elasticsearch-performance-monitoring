@@ -58,6 +58,23 @@ export function parseUptimeToSeconds(uptime: string | null | undefined): number 
   return value * (multipliers[unit] || 1);
 }
 
+/** Compare IPv4 addresses numerically; fall back to localeCompare for hostnames / IPv6. */
+export function compareIpAddresses(a: string, b: string): number {
+  const aIp = a.trim();
+  const bIp = b.trim();
+  const v4 = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/;
+  const aMatch = aIp.match(v4);
+  const bMatch = bIp.match(v4);
+  if (aMatch && bMatch) {
+    for (let i = 1; i <= 4; i++) {
+      const diff = parseInt(aMatch[i], 10) - parseInt(bMatch[i], 10);
+      if (diff !== 0) return diff;
+    }
+    return 0;
+  }
+  return aIp.localeCompare(bIp, undefined, { numeric: true });
+}
+
 /**
  * Parse disk size string (e.g., "50gb", "100mb") to bytes for sorting
  */

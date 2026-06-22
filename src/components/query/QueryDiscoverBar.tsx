@@ -8,7 +8,9 @@ import { normalizeQueryIndexPattern, type QueryMode } from '@/utils/querySearch'
 
 type QueryDiscoverBarProps = {
   indexPattern: string;
-  onIndexPatternChange: (value: string) => void;
+  searchIndexPattern: string;
+  indexPickerDisplayLabel?: string;
+  onIndexPatternCommit: (value: string) => void;
   patternOptions: QueryPatternOption[];
   onIndexPickerOpen?: () => void;
   mode: QueryMode;
@@ -21,7 +23,9 @@ type QueryDiscoverBarProps = {
 
 export function QueryDiscoverBar({
   indexPattern,
-  onIndexPatternChange,
+  searchIndexPattern,
+  indexPickerDisplayLabel,
+  onIndexPatternCommit,
   patternOptions,
   onIndexPickerOpen,
   mode,
@@ -35,7 +39,8 @@ export function QueryDiscoverBar({
     <div className="flex flex-wrap items-center gap-2 rounded-lg border border-gray-200 bg-white px-2 py-2 shadow-sm dark:border-gray-700 dark:bg-gray-900/40">
       <QueryIndexPatternPicker
         value={indexPattern}
-        onChange={onIndexPatternChange}
+        displayLabel={indexPickerDisplayLabel}
+        onCommit={onIndexPatternCommit}
         options={patternOptions}
         onOpenChange={(open) => {
           if (open) onIndexPickerOpen?.();
@@ -53,7 +58,7 @@ export function QueryDiscoverBar({
               onKeyDown={(e) => {
                 if (e.key === 'Enter') onSearch();
               }}
-              placeholder="Filter your data using query_string syntax"
+              placeholder="Filter your data"
               className="w-full rounded-md border border-gray-200 bg-gray-50 py-2 pl-9 pr-3 text-sm font-mono text-gray-900 placeholder:text-gray-400 focus:border-blue-500 focus:bg-white focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:focus:bg-gray-800"
               aria-label="Document search query"
             />
@@ -61,7 +66,7 @@ export function QueryDiscoverBar({
           <button
             type="button"
             onClick={onSearch}
-            disabled={loading || !normalizeQueryIndexPattern(indexPattern)}
+            disabled={loading || !normalizeQueryIndexPattern(searchIndexPattern)}
             className="inline-flex shrink-0 items-center gap-1.5 rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50 dark:bg-blue-500 dark:hover:bg-blue-600"
           >
             {loading ? <RefreshCw className="h-4 w-4 animate-spin" /> : null}

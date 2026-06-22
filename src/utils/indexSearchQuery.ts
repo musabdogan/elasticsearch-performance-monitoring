@@ -82,6 +82,11 @@ export const DOCUMENT_PAGE_SIZE_OPTIONS = [
   { value: 10_000, label: '10k' }
 ] as const;
 
+export function formatDocumentPageSizeTopLabel(size: number): string {
+  const match = DOCUMENT_PAGE_SIZE_OPTIONS.find((option) => option.value === size);
+  return match ? `Top ${match.label}` : `Top ${size}`;
+}
+
 export const INDEX_DATA_QUERY_EXAMPLES: Array<{ query: string; description: string }> = [
   { query: '*', description: 'Get all documents' },
   { query: 'server error', description: 'Documents containing server or error in any field' },

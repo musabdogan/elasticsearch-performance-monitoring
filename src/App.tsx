@@ -7,6 +7,8 @@ import AlertManagement from '@/components/alerts/AlertManagement';
 import { ClusterTabContent } from '@/components/tabs/ClusterTabContent';
 import { IndexingSearchTabContent } from '@/components/tabs/IndexingSearchTabContent';
 import type { GlobalIndexModalState, OpenIndexDetailsFn } from '@/types/indexDetail';
+import type { DiagnosisNavigation } from '@/types/diagnosis';
+import { parseActiveSearchesDeepLink, clearActiveSearchesDeepLinkParams } from '@/utils/extensionNavigation';
 import { IndexDetailModal } from '@/components/index/IndexDetailModal';
 import { IndicesTabContent } from '@/components/tabs/IndicesTabContent';
 import { NodesTabContent } from '@/components/tabs/NodesTabContent';
@@ -194,9 +196,36 @@ export default function App() {
   const [globalIndexModal, setGlobalIndexModal] = useState<GlobalIndexModalState | null>(null);
   const [globalNodeModalNode, setGlobalNodeModalNode] = useState<string | null>(null);
   const [queryPrefillIndex, setQueryPrefillIndex] = useState<string | null>(null);
+  const [diagnosisNav, setDiagnosisNav] = useState<DiagnosisNavigation | null>(null);
 
-  const openIndexDetails: OpenIndexDetailsFn = useCallback((indexName, tab) => {
-    setGlobalIndexModal({ indexName, tab });
+  useEffect(() => {
+    const deepLink = parseActiveSearchesDeepLink(window.location.search);
+    if (!deepLink) return;
+
+    setShowWelcomePage(false);
+    setMainTab('indices');
+    setDiagnosisNav({
+      indicesSection: 'activeSearches',
+      activeSearchesIndexFilter: deepLink.indexName
+    });
+    clearActiveSearchesDeepLinkParams();
+  }, []);
+
+  const openIndexDetails: OpenIndexDetailsFn = useCallback((indexName, tab, searchLatencyFromPoll) => {
+    setGlobalIndexModal({ indexName, tab, searchLatencyFromPoll });
+  }, []);
+
+  const navigateToActiveSearches = useCallback((indexName?: string) => {
+    setShowWelcomePage(false);
+    setMainTab('indices');
+    setDiagnosisNav({
+      indicesSection: 'activeSearches',
+      activeSearchesIndexFilter: indexName
+    });
+  }, []);
+
+  const openIndexDiagnosis = useCallback((indexName: string, searchLatencyFromPoll?: number | null) => {
+    setGlobalIndexModal({ indexName, tab: 'diagnosis', searchLatencyFromPoll });
   }, []);
 
   const openInQuery = useCallback((indexName: string) => {
@@ -484,6 +513,7 @@ export default function App() {
               {mainTab === 'indexing-search' && (
                 <IndexingSearchTabContent
                   onOpenIndexDetails={openIndexDetails}
+                  onOpenIndexDiagnosis={openIndexDiagnosis}
                   onOpenNodeDetails={(nodeName) => setGlobalNodeModalNode(nodeName)}
                 />
               )}
@@ -506,6 +536,9 @@ export default function App() {
                   onOpenNodeDetails={(nodeName) => setGlobalNodeModalNode(nodeName)}
                   onOpenIndexDetails={openIndexDetails}
                   onOpenInQuery={openInQuery}
+                  diagnosisNav={diagnosisNav}
+                  onDiagnosisNavConsumed={() => setDiagnosisNav(null)}
+                  onOpenIndexDiagnosis={(indexName) => openIndexDiagnosis(indexName)}
                 />
               )}
               {mainTab === 'search' && (
@@ -536,6 +569,7 @@ export default function App() {
               <IndexDetailModal
                 indexName={globalIndexModal.indexName}
                 initialTab={globalIndexModal.tab}
+                searchLatencyFromPoll={globalIndexModal.searchLatencyFromPoll}
                 onClose={() => setGlobalIndexModal(null)}
                 onOpenNodeDetails={(nodeName) => setGlobalNodeModalNode(nodeName)}
               />
@@ -544,6 +578,7 @@ export default function App() {
               modalOnly
               externalOpenNode={globalNodeModalNode}
               onExternalModalClose={() => setGlobalNodeModalNode(null)}
+              onOpenIndexDetails={openIndexDetails}
             />
           </>
         )}
@@ -563,6 +598,10 @@ export default function App() {
               onUpdateSettings={updateAlertSettings}
               onUpdateRule={updateAlertRule}
               onResetToDefaults={resetAlertsToDefaults}
+              onOpenActiveSearches={() => {
+                navigateToActiveSearches();
+                setShowAlertManagement(false);
+              }}
               isPanel={true}
             />
           </div>

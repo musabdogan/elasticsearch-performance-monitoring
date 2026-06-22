@@ -26,14 +26,15 @@ import {
 import {
   fetchTimeFieldBounds,
   getDateFieldFormatFromMappings,
+  hasValidTimeFieldBounds,
   needsTimeFieldBounds,
   pickDefaultTimeField,
   resolveTimeSearchResolution,
   resolveChartFilterRange,
   isAllTimePreset,
-  isChartTimeFilterActive,
-  isSearchResultsPreset,
-  buildResultsHistogramCacheKey,
+  DEFAULT_CHART_PRESET,
+  DEFAULT_TIME_PRESET,
+  timeChartRangeHasData,
   type TimeFieldBounds,
   type TimeRangeFilter,
   type TimeRangePreset
@@ -45,7 +46,9 @@ import {
   isAllIndicesQueryPattern,
   isConcreteIndexPattern,
   normalizeQueryIndexPattern,
+  pickIndexWithMostDocuments,
   simpleBodyToAdvancedJson,
+  DEFAULT_SIMPLE_QUERY,
   type QueryMode,
   type SortRule
 } from '@/utils/querySearch';
@@ -102,6 +105,8 @@ export function QueryTabContent({
   const [dataStreamNames, setDataStreamNames] = useState<string[]>([]);
   const dataStreamsLoadStateRef = useRef<'idle' | 'loading' | 'done'>('idle');
   const [indexPattern, setIndexPattern] = useState(ALL_INDICES_PATTERN);
+  const [searchIndexPattern, setSearchIndexPattern] = useState(ALL_INDICES_PATTERN);
+  const isIndexSelectionPending = indexPattern.trim() === '';
   const [mode, setMode] = useState<QueryMode>('simple');
   const [hydrated, setHydrated] = useState(false);
   const [fieldUsageSummary, setFieldUsageSummary] = useState<FieldUsageSummary | null>(null);
@@ -111,18 +116,72 @@ export function QueryTabContent({
   const [autoColumns, setAutoColumns] = useState(() => readAutoColumnsEnabled());
   const [timeFieldBounds, setTimeFieldBounds] = useState<TimeFieldBounds | null>(null);
   const [timeFieldBoundsLoading, setTimeFieldBoundsLoading] = useState(false);
+  const [timeFieldUsable, setTimeFieldUsable] = useState(false);
   const persistTimerRef = useRef<number | null>(null);
   const pendingColumnsResetRef = useRef(false);
-  const timePresetRef = useRef<string>('search');
+  const timePresetRef = useRef<string>(DEFAULT_TIME_PRESET);
   const allBoundsSearchKeyRef = useRef('');
+  const isFirstQueryVisitRef = useRef(true);
+  const skipIndexPatternSearchRef = useRef(true);
+  const indexPatternChangeSourceRef = useRef<'user' | null>(null);
+  const pendingPatternSearchRef = useRef(false);
+  const [documentSearchQueued, setDocumentSearchQueued] = useState(false);
+  const boundsRequestIdRef = useRef(0);
+  const chartExpandTriggeredRef = useRef(false);
+  const chartExpandProbeRef = useRef(false);
+  const chartFilterAppliedRef = useRef(false);
+  const runSearchRef = useRef<
+    ((opts?: {
+      query?: string;
+      advancedBody?: string;
+      from?: number;
+      size?: number;
+      sort?: SortRule[];
+      mode?: QueryMode;
+    }) => Promise<void>) | null
+  >(null);
+  const modeRef = useRef(mode);
+  const prevSearchIndexPatternRef = useRef(searchIndexPattern);
+  modeRef.current = mode;
+
+  const queueDocumentSearch = useCallback(() => {
+    pendingPatternSearchRef.current = true;
+    setDocumentSearchQueued(true);
+  }, []);
+
+  useEffect(() => {
+    skipIndexPatternSearchRef.current = true;
+    pendingPatternSearchRef.current = false;
+    setDocumentSearchQueued(false);
+    prevSearchIndexPatternRef.current = '';
+    chartExpandTriggeredRef.current = false;
+    chartFilterAppliedRef.current = false;
+  }, [clusterLabel]);
 
   useEffect(() => {
     if (!clusterLabel) return;
     const saved = readQueryState(clusterLabel);
-    setIndexPattern(normalizeQueryIndexPattern(saved?.indexPattern ?? ''));
+    const normalized = normalizeQueryIndexPattern(saved?.indexPattern ?? '');
+    setIndexPattern(normalized);
+    setSearchIndexPattern(normalized);
     if (saved?.mode) setMode(saved.mode);
+    isFirstQueryVisitRef.current = saved == null;
     setHydrated(true);
   }, [clusterLabel]);
+
+  useEffect(() => {
+    if (!hydrated || !clusterLabel || prefillIndex?.trim() || !isFirstQueryVisitRef.current) return;
+
+    const topIndex = pickIndexWithMostDocuments(snapshot?.indices);
+    if (!topIndex) return;
+    if (!isAllIndicesQueryPattern(searchIndexPattern)) return;
+
+    isFirstQueryVisitRef.current = false;
+    pendingColumnsResetRef.current = true;
+    queueDocumentSearch();
+    setIndexPattern(topIndex);
+    setSearchIndexPattern(topIndex);
+  }, [hydrated, clusterLabel, snapshot?.indices, prefillIndex, searchIndexPattern, queueDocumentSearch]);
 
   useEffect(() => {
     dataStreamsLoadStateRef.current = 'idle';
@@ -166,27 +225,24 @@ export function QueryTabContent({
     return options;
   }, [indexOptions, dataStreamNames]);
 
-  const effectiveIndexPattern = useMemo(
-    () => normalizeQueryIndexPattern(indexPattern),
-    [indexPattern]
-  );
-
-  const needsIndexMetadata = !isAllIndicesQueryPattern(effectiveIndexPattern);
+  const needsIndexMetadata = !isAllIndicesQueryPattern(searchIndexPattern);
 
   const activeFieldUsage = useMemo(
-    () => (fieldUsageForPattern === effectiveIndexPattern ? fieldUsageSummary : null),
-    [fieldUsageForPattern, effectiveIndexPattern, fieldUsageSummary]
+    () => (fieldUsageForPattern === searchIndexPattern ? fieldUsageSummary : null),
+    [fieldUsageForPattern, searchIndexPattern, fieldUsageSummary]
   );
 
   useEffect(() => {
     if (prefillIndex?.trim()) {
       pendingColumnsResetRef.current = true;
+      queueDocumentSearch();
       setFieldUsageSummary(null);
       setFieldUsageForPattern(null);
       setIndexPattern(prefillIndex.trim());
+      setSearchIndexPattern(prefillIndex.trim());
       onPrefillConsumed?.();
     }
-  }, [prefillIndex, onPrefillConsumed]);
+  }, [prefillIndex, onPrefillConsumed, queueDocumentSearch]);
 
   useEffect(() => {
     if (!activeCluster || !needsIndexMetadata) {
@@ -203,7 +259,7 @@ export function QueryTabContent({
     setIndexDetailsLoading(true);
 
     const controller = new AbortController();
-    const idx = effectiveIndexPattern;
+    const idx = searchIndexPattern;
     const fetchUsage = isConcreteIndexPattern(idx)
       ? getFieldUsageStats(activeCluster, idx, controller.signal).catch(() => null)
       : Promise.resolve(null);
@@ -226,16 +282,19 @@ export function QueryTabContent({
       });
 
     return () => controller.abort();
-  }, [activeCluster, effectiveIndexPattern, needsIndexMetadata]);
+  }, [activeCluster, searchIndexPattern, needsIndexMetadata]);
 
   const fieldMetadataReady =
     !needsIndexMetadata ||
     (!indexDetailsLoading &&
-      fieldUsageForPattern === effectiveIndexPattern &&
+      fieldUsageForPattern === searchIndexPattern &&
       (fieldUsageSummary != null || indexDetails != null));
 
+  /** Index metadata fetch (field usage + mapping) before first _search. */
+  const metadataLoading = needsIndexMetadata && !fieldMetadataReady;
+
   const timeHistogram = useQueryTimeHistogramState({
-    indexPattern: effectiveIndexPattern,
+    indexPattern: searchIndexPattern,
     enabled: hydrated,
     indexDetails,
     indexDetailsLoading
@@ -254,50 +313,118 @@ export function QueryTabContent({
       !activeCluster ||
       !timeHistogram.visible ||
       !timeHistogram.selectedTimeField ||
-      !timeHistogram.isReadyForSearch
+      !timeHistogram.isReadyForSearch ||
+      timeHistogram.collapsed
     ) {
       setTimeFieldBounds(null);
       setTimeFieldBoundsLoading(false);
+      setTimeFieldUsable(false);
+      chartExpandTriggeredRef.current = false;
       return;
     }
 
-    if (!boundsRequired) {
-      setTimeFieldBounds(null);
+    const field = timeHistogram.selectedTimeField;
+    const idx = searchIndexPattern;
+    const capturedIndexDetails = indexDetails;
+    const capturedPreset = timeHistogram.timePreset;
+    const needsBounds = needsTimeFieldBounds(capturedPreset, timeHistogram.brushRange);
+
+    const runExpandSearch = (bounds: TimeFieldBounds | null) => {
+      if (!chartExpandTriggeredRef.current) return;
+      chartExpandTriggeredRef.current = false;
+      const fmt = capturedIndexDetails
+        ? getDateFieldFormatFromMappings(capturedIndexDetails, field)
+        : null;
+      const range = resolveChartFilterRange(capturedPreset, field, null);
+      timeSearchContextRef.current = {
+        timeField: field,
+        timeFieldFormat: fmt,
+        resolution: resolveTimeSearchResolution(capturedPreset, range, bounds, false)
+      };
+      pendingColumnsResetRef.current = true;
+      void runSearchRef.current?.({ mode: modeRef.current, from: 0 });
+    };
+
+    if (!needsBounds) {
       setTimeFieldBoundsLoading(false);
+      setTimeFieldUsable(true);
+      runExpandSearch(null);
       return;
     }
 
+    const requestId = ++boundsRequestIdRef.current;
     setTimeFieldBoundsLoading(true);
     const controller = new AbortController();
-    const field = timeHistogram.selectedTimeField;
-    const idx = effectiveIndexPattern;
 
     fetchTimeFieldBounds(activeCluster, idx, field, controller.signal)
       .then((bounds) => {
-        if (controller.signal.aborted) return;
-        setTimeFieldBounds(bounds);
+        if (controller.signal.aborted || requestId !== boundsRequestIdRef.current) return;
+        const usable = hasValidTimeFieldBounds(bounds);
+        setTimeFieldUsable(usable);
+        setTimeFieldBounds(usable ? bounds : null);
+
+        if (!usable) {
+          chartExpandTriggeredRef.current = false;
+          chartExpandProbeRef.current = false;
+          timeHistogram.setCollapsed(true);
+          return;
+        }
+
+        runExpandSearch(bounds);
       })
       .catch(() => {
-        if (!controller.signal.aborted) setTimeFieldBounds(null);
+        if (controller.signal.aborted || requestId !== boundsRequestIdRef.current) return;
+        setTimeFieldBounds(null);
+        setTimeFieldUsable(false);
+        chartExpandTriggeredRef.current = false;
+        chartExpandProbeRef.current = false;
+        timeHistogram.setCollapsed(true);
       })
       .finally(() => {
-        if (!controller.signal.aborted) setTimeFieldBoundsLoading(false);
+        if (requestId === boundsRequestIdRef.current) {
+          setTimeFieldBoundsLoading(false);
+        }
       });
 
     return () => controller.abort();
   }, [
     activeCluster,
-    effectiveIndexPattern,
+    searchIndexPattern,
     timeHistogram.visible,
     timeHistogram.selectedTimeField,
     timeHistogram.isReadyForSearch,
-    boundsRequired
+    timeHistogram.collapsed,
+    timeHistogram.timePreset,
+    timeHistogram.brushRange,
+    indexDetails,
+    timeHistogram.setCollapsed
   ]);
+
+  useEffect(() => {
+    chartExpandTriggeredRef.current = false;
+    chartExpandProbeRef.current = false;
+    chartFilterAppliedRef.current = false;
+    setDocumentSearchQueued(false);
+  }, [searchIndexPattern]);
 
   const timeFieldFormat = useMemo(() => {
     if (!indexDetails || !timeHistogram.selectedTimeField) return null;
     return getDateFieldFormatFromMappings(indexDetails, timeHistogram.selectedTimeField);
   }, [indexDetails, timeHistogram.selectedTimeField]);
+
+  const timeChartAvailable =
+    timeHistogram.visible && Boolean(timeHistogram.selectedTimeField);
+
+  /** Chart affects search (filter, histogram, sort) only when expanded with valid bounds. */
+  const timeChartSearchActive =
+    timeChartAvailable &&
+    !timeHistogram.collapsed &&
+    (boundsRequired ? timeFieldUsable : Boolean(timeHistogram.selectedTimeField));
+
+  const showTimeChart =
+    timeChartAvailable &&
+    (timeHistogram.collapsed ||
+      (boundsRequired ? timeFieldUsable || timeFieldBoundsLoading : true));
 
   const timeSearchContextRef = useRef<{
     timeField: string;
@@ -306,10 +433,7 @@ export function QueryTabContent({
   } | null>(null);
 
   timeSearchContextRef.current =
-    timeHistogram.visible &&
-    !timeHistogram.collapsed &&
-    timeHistogram.selectedTimeField &&
-    timeHistogram.timeRangeForSearch
+    timeChartSearchActive && timeHistogram.timeRangeForSearch
       ? {
           timeField: timeHistogram.selectedTimeField,
           timeFieldFormat,
@@ -324,26 +448,36 @@ export function QueryTabContent({
 
   const getTimeSearchContext = useCallback(() => timeSearchContextRef.current, []);
 
-  const autoRunWhenReady =
-    !timeHistogram.visible ||
-    !fieldMetadataReady ||
-    (timeHistogram.collapsed
-      ? true
-      : timeHistogram.isReadyForSearch && (!boundsRequired || !timeFieldBoundsLoading));
+  const autoRunWhenReady = useMemo(() => {
+    if (needsIndexMetadata && !fieldMetadataReady) return false;
+    if (!timeHistogram.visible || timeHistogram.collapsed) return true;
+    if (!timeHistogram.isReadyForSearch) return false;
+    if (boundsRequired && timeFieldBoundsLoading) return false;
+    return true;
+  }, [
+    needsIndexMetadata,
+    fieldMetadataReady,
+    timeHistogram.visible,
+    timeHistogram.collapsed,
+    timeHistogram.isReadyForSearch,
+    boundsRequired,
+    timeFieldBoundsLoading
+  ]);
 
   const autoDefaultTimeField = useMemo(() => {
-    if (!timeHistogram.visible) return null;
-    if (needsIndexMetadata && !fieldMetadataReady) return null;
+    if (!timeChartSearchActive) return null;
     return pickDefaultTimeField(timeHistogram.dateFields);
-  }, [timeHistogram.visible, timeHistogram.dateFields, needsIndexMetadata, fieldMetadataReady]);
+  }, [timeChartSearchActive, timeHistogram.dateFields]);
 
-  /** Chart-selected time field drives default sort/columns; falls back to mapping default. */
+  /** Expanded chart time field drives sort; collapsed uses field-usage defaults only. */
   const sortTimeField = useMemo(() => {
-    if (!timeHistogram.visible) return null;
+    if (timeChartSearchActive) {
+      return timeHistogram.selectedTimeField || autoDefaultTimeField;
+    }
     if (needsIndexMetadata && !fieldMetadataReady) return null;
-    return timeHistogram.selectedTimeField || autoDefaultTimeField;
+    return null;
   }, [
-    timeHistogram.visible,
+    timeChartSearchActive,
     timeHistogram.selectedTimeField,
     autoDefaultTimeField,
     needsIndexMetadata,
@@ -363,11 +497,16 @@ export function QueryTabContent({
     [sortTimeField, autoDefaultTimeField, activeFieldUsage]
   );
 
-  const savedState = clusterLabel && hydrated ? readQueryState(clusterLabel) : null;
+  const savedState = useMemo(
+    () => (clusterLabel && hydrated ? readQueryState(clusterLabel) : null),
+    [clusterLabel, hydrated]
+  );
+  const initialSimpleQuery =
+    savedState?.simpleQuery === '*' ? '' : (savedState?.simpleQuery ?? DEFAULT_SIMPLE_QUERY);
 
-  const search = useDocumentSearch(activeCluster, effectiveIndexPattern, hydrated, {
+  const search = useDocumentSearch(activeCluster, searchIndexPattern, hydrated, {
     mode,
-    simpleQuery: savedState?.simpleQuery,
+    simpleQuery: initialSimpleQuery,
     advancedBody: savedState?.advancedBody,
     sort: savedState?.sort?.length ? savedState.sort : undefined,
     defaultSort,
@@ -379,9 +518,48 @@ export function QueryTabContent({
     getTimeSearchContext
   });
 
+  runSearchRef.current = search.runSearch;
+
+  /** After expand probe on 15m, fall back to All when the window has no documents. */
   useEffect(() => {
-    onRefreshStateChange?.(search.loading);
-  }, [search.loading, onRefreshStateChange]);
+    if (!chartExpandProbeRef.current) return;
+    if (timeHistogram.collapsed || search.loading || !search.initialized) return;
+    if (timeHistogram.timePreset !== DEFAULT_TIME_PRESET) return;
+    if (search.error) {
+      chartExpandProbeRef.current = false;
+      return;
+    }
+
+    if (timeChartRangeHasData(search.histogramBuckets, search.total, search.hits.length)) {
+      chartExpandProbeRef.current = false;
+      return;
+    }
+
+    chartExpandProbeRef.current = false;
+    chartExpandTriggeredRef.current = true;
+    timeHistogram.setTimePreset('all');
+  }, [
+    timeHistogram.collapsed,
+    timeHistogram.timePreset,
+    timeHistogram.setTimePreset,
+    search.loading,
+    search.initialized,
+    search.error,
+    search.histogramBuckets,
+    search.total,
+    search.hits.length
+  ]);
+
+  /** Unified busy: metadata wait, queued search, and in-flight _search feel identical in the UI. */
+  const queryBusy = search.loading || metadataLoading || documentSearchQueued;
+
+  useEffect(() => {
+    if (search.loading) setDocumentSearchQueued(false);
+  }, [search.loading]);
+
+  useEffect(() => {
+    onRefreshStateChange?.(queryBusy);
+  }, [queryBusy, onRefreshStateChange]);
 
   useEffect(() => {
     const onRefresh = () => search.refresh();
@@ -389,30 +567,65 @@ export function QueryTabContent({
     return () => window.removeEventListener('refreshSearch', onRefresh);
   }, [search.refresh]);
 
+  useEffect(() => {
+    if (!pendingPatternSearchRef.current) return;
+    if (!hydrated || !activeCluster) return;
+    if (needsIndexMetadata && !fieldMetadataReady) return;
+
+    pendingPatternSearchRef.current = false;
+    pendingColumnsResetRef.current = true;
+    void runSearchRef.current?.({ mode: modeRef.current, from: 0 });
+  }, [hydrated, activeCluster, needsIndexMetadata, fieldMetadataReady]);
+
+  useEffect(() => {
+    if (!hydrated || !activeCluster) return;
+
+    if (skipIndexPatternSearchRef.current) {
+      skipIndexPatternSearchRef.current = false;
+      prevSearchIndexPatternRef.current = searchIndexPattern;
+      return;
+    }
+    if (indexPatternChangeSourceRef.current === 'user') {
+      indexPatternChangeSourceRef.current = null;
+      prevSearchIndexPatternRef.current = searchIndexPattern;
+      return;
+    }
+
+    if (prevSearchIndexPatternRef.current === searchIndexPattern) return;
+    prevSearchIndexPatternRef.current = searchIndexPattern;
+
+    pendingColumnsResetRef.current = true;
+    if (needsIndexMetadata && !isAllIndicesQueryPattern(searchIndexPattern)) {
+      queueDocumentSearch();
+      return;
+    }
+    void runSearchRef.current?.({ mode: modeRef.current, from: 0 });
+  }, [hydrated, activeCluster, searchIndexPattern, needsIndexMetadata, queueDocumentSearch]);
+
   const showIndexColumn = useMemo(
     () =>
-      shouldShowIndexColumn(search.hits, effectiveIndexPattern) ||
-      /[*?,]/.test(effectiveIndexPattern),
-    [search.hits, effectiveIndexPattern]
+      shouldShowIndexColumn(search.hits, searchIndexPattern) ||
+      /[*?,]/.test(searchIndexPattern),
+    [search.hits, searchIndexPattern]
   );
 
-  const scopeKey = columnScopeKey(clusterLabel, effectiveIndexPattern);
+  const scopeKey = columnScopeKey(clusterLabel, searchIndexPattern);
 
   /** Latch page hits for field sidebar only after _search completes (same render as reset). */
   const hitsForDiscoveryRef = useRef<{ pattern: string; revision: number; hits: SearchHit[] }>({
-    pattern: effectiveIndexPattern,
+    pattern: searchIndexPattern,
     revision: -1,
     hits: []
   });
 
-  if (hitsForDiscoveryRef.current.pattern !== effectiveIndexPattern) {
-    hitsForDiscoveryRef.current = { pattern: effectiveIndexPattern, revision: -1, hits: [] };
+  if (hitsForDiscoveryRef.current.pattern !== searchIndexPattern) {
+    hitsForDiscoveryRef.current = { pattern: searchIndexPattern, revision: -1, hits: [] };
   }
 
   if (!search.loading && search.initialized) {
     if (hitsForDiscoveryRef.current.revision !== search.searchRevision) {
       hitsForDiscoveryRef.current = {
-        pattern: effectiveIndexPattern,
+        pattern: searchIndexPattern,
         revision: search.searchRevision,
         hits: search.hits
       };
@@ -420,7 +633,7 @@ export function QueryTabContent({
   }
 
   const hitsForFieldDiscovery =
-    hitsForDiscoveryRef.current.pattern === effectiveIndexPattern
+    hitsForDiscoveryRef.current.pattern === searchIndexPattern
       ? hitsForDiscoveryRef.current.hits
       : [];
 
@@ -449,7 +662,7 @@ export function QueryTabContent({
     if (autoColumns) {
       pendingColumnsResetRef.current = true;
     }
-  }, [effectiveIndexPattern, autoColumns]);
+  }, [searchIndexPattern, autoColumns]);
 
   const columnsReadyForReset = useMemo(() => {
     if (needsIndexMetadata && !fieldMetadataReady) return false;
@@ -475,7 +688,7 @@ export function QueryTabContent({
     pendingColumnsResetRef.current = false;
     columns.resetToDefault();
   }, [
-    effectiveIndexPattern,
+    searchIndexPattern,
     activeFieldUsage,
     search.searchRevision,
     columnsReadyForReset,
@@ -491,7 +704,7 @@ export function QueryTabContent({
   const persistState = useCallback(() => {
     if (!clusterLabel) return;
     writeQueryState(clusterLabel, {
-      indexPattern: effectiveIndexPattern,
+      indexPattern: searchIndexPattern,
       mode,
       simpleQuery: search.query,
       advancedBody: search.advancedBody,
@@ -499,7 +712,7 @@ export function QueryTabContent({
       from: search.from,
       sort: search.sort
     });
-  }, [clusterLabel, effectiveIndexPattern, mode, search.query, search.advancedBody, search.size, search.from, search.sort]);
+  }, [clusterLabel, searchIndexPattern, mode, search.query, search.advancedBody, search.size, search.from, search.sort]);
 
   useEffect(() => {
     if (!hydrated) return;
@@ -532,20 +745,46 @@ export function QueryTabContent({
   const indexPatternRef = useRef(indexPattern);
   indexPatternRef.current = indexPattern;
 
-  const handleIndexPatternChange = useCallback((value: string) => {
-    const nextPattern = normalizeQueryIndexPattern(value);
-    if (nextPattern === normalizeQueryIndexPattern(indexPatternRef.current)) return;
-    pendingColumnsResetRef.current = true;
-    setFieldUsageSummary(null);
-    setFieldUsageForPattern(null);
-    setIndexDetails(null);
-    if (!isAllIndicesQueryPattern(nextPattern)) {
-      setIndexDetailsLoading(true);
-    } else {
-      setIndexDetailsLoading(false);
-    }
-    setIndexPattern(nextPattern);
-  }, []);
+  const applyIndexPattern = useCallback(
+    (raw: string) => {
+      if (raw.trim() === '') {
+        setIndexPattern('');
+        return;
+      }
+
+      const wasPending = indexPatternRef.current.trim() === '';
+      const nextPattern = normalizeQueryIndexPattern(raw);
+      const uiCurrent = wasPending ? '' : normalizeQueryIndexPattern(indexPatternRef.current);
+      const patternChanged = nextPattern !== uiCurrent;
+
+      if (patternChanged) {
+        indexPatternChangeSourceRef.current = 'user';
+        pendingColumnsResetRef.current = true;
+        setFieldUsageSummary(null);
+        setFieldUsageForPattern(null);
+        setIndexDetails(null);
+        if (!isAllIndicesQueryPattern(nextPattern)) {
+          setIndexDetailsLoading(true);
+        } else {
+          setIndexDetailsLoading(false);
+        }
+        setIndexPattern(nextPattern);
+        setSearchIndexPattern(nextPattern);
+        if (isAllIndicesQueryPattern(nextPattern)) {
+          void search.runSearch({ mode, from: 0 });
+        } else {
+          queueDocumentSearch();
+        }
+        return;
+      }
+
+      pendingColumnsResetRef.current = true;
+      void search.runSearch({ mode, from: 0 });
+    },
+    [mode, search.runSearch, queueDocumentSearch]
+  );
+
+  const handleIndexPatternCommit = applyIndexPattern;
 
   const handleColumnSort = useCallback(
     (field: string) => {
@@ -566,7 +805,7 @@ export function QueryTabContent({
       timeHistogram.handleBrushSelect(range);
 
       const timeField = timeHistogram.selectedTimeField;
-      if (timeHistogram.visible && !timeHistogram.collapsed && timeField) {
+      if (timeChartSearchActive && timeField) {
         timeSearchContextRef.current = {
           timeField,
           timeFieldFormat,
@@ -580,12 +819,12 @@ export function QueryTabContent({
       }
 
       pendingColumnsResetRef.current = true;
+      chartFilterAppliedRef.current = true;
       void search.runSearch({ mode, from: 0 });
     },
     [
       timeHistogram.handleBrushSelect,
-      timeHistogram.visible,
-      timeHistogram.collapsed,
+      timeChartSearchActive,
       timeHistogram.selectedTimeField,
       timeHistogram.timePreset,
       timeFieldFormat,
@@ -595,222 +834,91 @@ export function QueryTabContent({
     ]
   );
 
-  const runChartPresetSearch = useCallback(
-    (preset: TimeRangePreset) => {
+  const runExpandedChartSearch = useCallback(
+    (preset: TimeRangePreset, brushRange: TimeRangeFilter | null = null) => {
       const timeField = timeHistogram.selectedTimeField;
-      if (!timeField || !timeHistogram.visible || timeHistogram.collapsed) return;
+      if (!timeField || timeHistogram.collapsed) return;
+      if (needsTimeFieldBounds(preset, brushRange) && !timeFieldUsable) return;
 
-      const range = resolveChartFilterRange(preset, timeField, null);
+      const range = resolveChartFilterRange(preset, timeField, brushRange);
       timeSearchContextRef.current = {
         timeField,
         timeFieldFormat,
-        resolution: resolveTimeSearchResolution(preset, range, timeFieldBounds, false)
+        resolution: resolveTimeSearchResolution(
+          preset,
+          range,
+          timeFieldBounds,
+          brushRange != null
+        )
       };
 
       timePresetRef.current = preset;
       if (isAllTimePreset(preset)) {
-        allBoundsSearchKeyRef.current = '';
+        if (timeFieldBounds?.minMs != null && timeFieldBounds?.maxMs != null) {
+          allBoundsSearchKeyRef.current = `${searchIndexPattern}:${timeField}:${timeFieldBounds.minMs}:${timeFieldBounds.maxMs}`;
+        } else {
+          allBoundsSearchKeyRef.current = '';
+        }
       }
       pendingColumnsResetRef.current = true;
+      chartFilterAppliedRef.current = true;
       void search.runSearch({ mode, from: 0 });
     },
     [
       timeHistogram.selectedTimeField,
-      timeHistogram.visible,
       timeHistogram.collapsed,
+      timeFieldUsable,
       timeFieldFormat,
       timeFieldBounds,
       search.runSearch,
-      mode
+      mode,
+      searchIndexPattern
     ]
   );
 
   const handleHistogramBrushClear = useCallback(() => {
     timeHistogram.clearBrushRange();
-    runChartPresetSearch(timeHistogram.timePreset);
-  }, [timeHistogram.clearBrushRange, timeHistogram.timePreset, runChartPresetSearch]);
+    runExpandedChartSearch(timeHistogram.timePreset, null);
+  }, [timeHistogram.clearBrushRange, timeHistogram.timePreset, runExpandedChartSearch]);
 
   const handleTimePresetChange = useCallback(
     (preset: TimeRangePreset) => {
-      const hadBrush = timeHistogram.brushRange != null;
       timeHistogram.setTimePreset(preset);
-      if (hadBrush) {
-        runChartPresetSearch(preset);
-      }
+      runExpandedChartSearch(preset, timeHistogram.brushRange);
     },
-    [timeHistogram.brushRange, timeHistogram.setTimePreset, runChartPresetSearch]
+    [timeHistogram.setTimePreset, timeHistogram.brushRange, runExpandedChartSearch]
   );
-
-  const expandSearchPendingRef = useRef(false);
-  const chartCollapsedRef = useRef(timeHistogram.collapsed);
-  const resultsHistogramCacheKeyRef = useRef<string | null>(null);
-
-  const buildHistogramCacheKey = useCallback(() => {
-    return buildResultsHistogramCacheKey({
-      indexPattern: effectiveIndexPattern,
-      timeField: timeHistogram.selectedTimeField,
-      mode,
-      query: search.query,
-      advancedBody: search.advancedBody,
-      searchRevision: search.searchRevision
-    });
-  }, [
-    effectiveIndexPattern,
-    timeHistogram.selectedTimeField,
-    mode,
-    search.query,
-    search.advancedBody,
-    search.searchRevision
-  ]);
-
-  useEffect(() => {
-    resultsHistogramCacheKeyRef.current = null;
-  }, [effectiveIndexPattern]);
-
-  useEffect(() => {
-    if (search.histogramBuckets.length === 0) {
-      resultsHistogramCacheKeyRef.current = null;
-      return;
-    }
-    if (timeHistogram.collapsed) return;
-    if (!isSearchResultsPreset(timeHistogram.timePreset) || timeHistogram.brushRange) return;
-    resultsHistogramCacheKeyRef.current = buildHistogramCacheKey();
-  }, [
-    search.histogramBuckets.length,
-    search.searchRevision,
-    timeHistogram.collapsed,
-    timeHistogram.timePreset,
-    timeHistogram.brushRange,
-    buildHistogramCacheKey
-  ]);
 
   const handleTimeChartCollapsedChange = useCallback(
     (nextCollapsed: boolean) => {
-      timeHistogram.setCollapsed(nextCollapsed);
-    },
-    [timeHistogram.setCollapsed]
-  );
-
-  useEffect(() => {
-    if (!search.initialized) {
-      chartCollapsedRef.current = timeHistogram.collapsed;
-      return;
-    }
-    if (chartCollapsedRef.current === timeHistogram.collapsed) return;
-    chartCollapsedRef.current = timeHistogram.collapsed;
-
-    if (timeHistogram.collapsed) {
-      expandSearchPendingRef.current = false;
-      if (isChartTimeFilterActive(timeHistogram.timePreset, timeHistogram.brushRange)) {
-        pendingColumnsResetRef.current = true;
-        void search.runSearch({ mode, from: 0 });
+      if (nextCollapsed) {
+        chartExpandTriggeredRef.current = false;
+        timeHistogram.setCollapsed(true);
+        if (chartFilterAppliedRef.current) {
+          chartFilterAppliedRef.current = false;
+          pendingColumnsResetRef.current = true;
+          void runSearchRef.current?.({ mode: modeRef.current, from: 0 });
+        }
+        return;
       }
-      return;
-    }
 
-    expandSearchPendingRef.current = true;
-    const filterActive = isChartTimeFilterActive(timeHistogram.timePreset, timeHistogram.brushRange);
-    const canReuseHistogram =
-      !filterActive &&
-      search.histogramBuckets.length > 0 &&
-      resultsHistogramCacheKeyRef.current === buildHistogramCacheKey();
-
-    if (canReuseHistogram) {
-      expandSearchPendingRef.current = false;
-      return;
-    }
-
-    const needsBounds = needsTimeFieldBounds(timeHistogram.timePreset, timeHistogram.brushRange);
-    if (!needsBounds || !timeFieldBoundsLoading) {
-      expandSearchPendingRef.current = false;
-      pendingColumnsResetRef.current = true;
-      void search.runSearch({ mode, from: 0 });
-    }
-  }, [
-    search.initialized,
-    search.runSearch,
-    search.histogramBuckets.length,
-    search.searchRevision,
-    buildHistogramCacheKey,
-    mode,
-    timeHistogram.collapsed,
-    timeHistogram.timePreset,
-    timeHistogram.brushRange,
-    timeFieldBoundsLoading
-  ]);
-
-  useEffect(() => {
-    if (!expandSearchPendingRef.current || !search.initialized) return;
-    if (timeHistogram.collapsed || !timeHistogram.visible) return;
-    if (timeFieldBoundsLoading) return;
-
-    const filterActive = isChartTimeFilterActive(timeHistogram.timePreset, timeHistogram.brushRange);
-    const canReuseHistogram =
-      !filterActive &&
-      search.histogramBuckets.length > 0 &&
-      resultsHistogramCacheKeyRef.current === buildHistogramCacheKey();
-
-    expandSearchPendingRef.current = false;
-    if (canReuseHistogram) return;
-
-    pendingColumnsResetRef.current = true;
-    void search.runSearch({ mode, from: 0 });
-  }, [
-    search.initialized,
-    search.runSearch,
-    search.histogramBuckets.length,
-    search.searchRevision,
-    buildHistogramCacheKey,
-    mode,
-    timeHistogram.collapsed,
-    timeHistogram.visible,
-    timeHistogram.timePreset,
-    timeHistogram.brushRange,
-    timeFieldBoundsLoading
-  ]);
-
-  const runSearchRef = useRef(search.runSearch);
-  runSearchRef.current = search.runSearch;
-
-  useEffect(() => {
-    if (!timeHistogram.visible || timeHistogram.collapsed || !search.initialized) return;
-    const presetKey = timeHistogram.timePreset;
-    if (timePresetRef.current === presetKey) return;
-
-    timePresetRef.current = presetKey;
-
-    if (isAllTimePreset(presetKey)) {
-      allBoundsSearchKeyRef.current = '';
-      return;
-    }
-
-    if (isSearchResultsPreset(presetKey)) {
-      pendingColumnsResetRef.current = true;
-      void runSearchRef.current({ mode, from: 0 });
-      return;
-    }
-
-    if (needsTimeFieldBounds(presetKey, timeHistogram.brushRange) && timeFieldBoundsLoading) return;
-
-    pendingColumnsResetRef.current = true;
-    void runSearchRef.current({ mode, from: 0 });
-  }, [
-    timeHistogram.timePreset,
-    timeHistogram.visible,
-    timeHistogram.collapsed,
-    timeHistogram.brushRange,
-    search.initialized,
-    mode,
-    timeFieldBoundsLoading
-  ]);
+      // Mark that expand triggered — bounds fetch or relative preset path will fire the search.
+      chartExpandTriggeredRef.current = true;
+      chartExpandProbeRef.current = true;
+      timeHistogram.setTimePreset(DEFAULT_CHART_PRESET);
+      timeHistogram.clearBrushRange();
+      timeHistogram.setCollapsed(false);
+    },
+    [timeHistogram.setCollapsed, timeHistogram.setTimePreset, timeHistogram.clearBrushRange]
+  );
 
   const autoTimeFieldRef = useRef('');
   useEffect(() => {
     autoTimeFieldRef.current = '';
-  }, [effectiveIndexPattern]);
+  }, [searchIndexPattern]);
 
   useEffect(() => {
-    if (!search.initialized || !timeHistogram.visible || timeHistogram.collapsed) return;
+    if (!search.initialized || timeHistogram.collapsed || !timeChartAvailable) return;
     if (!timeHistogram.selectedTimeField) return;
 
     const boundsNeeded = needsTimeFieldBounds(timeHistogram.timePreset, timeHistogram.brushRange);
@@ -823,13 +931,11 @@ export function QueryTabContent({
 
     if (!previousField) return;
 
-    resultsHistogramCacheKeyRef.current = null;
-    void search.runSearch({ mode, from: 0 });
+    pendingColumnsResetRef.current = true;
+    void runSearchRef.current?.({ mode: modeRef.current, from: 0 });
   }, [
     search.initialized,
-    search.runSearch,
-    mode,
-    timeHistogram.visible,
+    timeChartAvailable,
     timeHistogram.collapsed,
     timeHistogram.timePreset,
     timeHistogram.brushRange,
@@ -839,42 +945,18 @@ export function QueryTabContent({
 
   useEffect(() => {
     allBoundsSearchKeyRef.current = '';
-  }, [effectiveIndexPattern]);
-
-  useEffect(() => {
-    if (!search.initialized || timeHistogram.collapsed || !timeHistogram.visible) return;
-    if (!isAllTimePreset(timeHistogram.timePreset)) return;
-    if (timeFieldBoundsLoading) return;
-    if (timeFieldBounds?.minMs == null || timeFieldBounds?.maxMs == null) return;
-
-    const key = `${effectiveIndexPattern}:${timeHistogram.selectedTimeField}:${timeFieldBounds.minMs}:${timeFieldBounds.maxMs}`;
-    if (allBoundsSearchKeyRef.current === key) return;
-    allBoundsSearchKeyRef.current = key;
-    pendingColumnsResetRef.current = true;
-    void search.runSearch({ mode, from: 0 });
-  }, [
-    search.initialized,
-    search.runSearch,
-    mode,
-    effectiveIndexPattern,
-    timeHistogram.collapsed,
-    timeHistogram.visible,
-    timeHistogram.timePreset,
-    timeHistogram.selectedTimeField,
-    timeFieldBounds,
-    timeFieldBoundsLoading
-  ]);
+  }, [searchIndexPattern]);
 
   const requestUrl = useMemo(() => {
     if (!activeCluster) return '';
     const base = activeCluster.baseUrl.replace(/\/$/, '');
-    return `${base}/${effectiveIndexPattern}/_search`;
-  }, [activeCluster, effectiveIndexPattern]);
+    return `${base}/${searchIndexPattern}/_search`;
+  }, [activeCluster, searchIndexPattern]);
 
   const curl = useMemo(() => {
     if (!activeCluster || !search.lastRequestBody) return '';
-    return buildSearchCurl(activeCluster.baseUrl, effectiveIndexPattern, search.lastRequestBody, activeCluster);
-  }, [activeCluster, effectiveIndexPattern, search.lastRequestBody]);
+    return buildSearchCurl(activeCluster.baseUrl, searchIndexPattern, search.lastRequestBody, activeCluster);
+  }, [activeCluster, searchIndexPattern, search.lastRequestBody]);
 
   const pagination = useMemo(
     () => ({
@@ -903,11 +985,13 @@ export function QueryTabContent({
         <div className="tab-section-inline-tools">
           <button
             type="button"
-            onClick={() => search.refresh()}
-            disabled={search.loading}
+            onClick={() => {
+              search.refresh();
+            }}
+            disabled={queryBusy}
             className="inline-flex items-center gap-1 rounded border border-gray-300 px-2 py-1 text-xs text-gray-700 hover:bg-gray-50 disabled:opacity-40 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700"
           >
-            <RefreshCw className={`h-3.5 w-3.5 ${search.loading ? 'animate-spin' : ''}`} />
+            <RefreshCw className={`h-3.5 w-3.5 ${queryBusy ? 'animate-spin' : ''}`} />
             Refresh
           </button>
         </div>
@@ -916,7 +1000,9 @@ export function QueryTabContent({
         <div className="tab-section-scroll-fill space-y-3">
           <QueryDiscoverBar
             indexPattern={indexPattern}
-            onIndexPatternChange={handleIndexPatternChange}
+            searchIndexPattern={searchIndexPattern}
+            indexPickerDisplayLabel={isIndexSelectionPending ? searchIndexPattern : undefined}
+            onIndexPatternCommit={handleIndexPatternCommit}
             patternOptions={patternOptions}
             onIndexPickerOpen={loadDataStreams}
             mode={mode}
@@ -924,10 +1010,10 @@ export function QueryTabContent({
             query={search.query}
             onQueryChange={search.setQuery}
             onSearch={handleSearch}
-            loading={search.loading}
+            loading={queryBusy}
           />
 
-          {timeHistogram.visible && timeHistogram.selectedTimeField ? (
+          {showTimeChart ? (
             <QueryTimeHistogram
               collapsed={timeHistogram.collapsed}
               onCollapsedChange={handleTimeChartCollapsedChange}
@@ -941,7 +1027,7 @@ export function QueryTabContent({
               timeFieldBounds={timeFieldBounds}
               boundsLoading={boundsRequired && timeFieldBoundsLoading}
               buckets={search.histogramBuckets}
-              loading={search.loading}
+              loading={queryBusy}
               fieldsLoading={timeHistogram.fieldsLoading}
               error={search.histogramError}
               onBrushApply={handleHistogramBrushApply}
@@ -951,17 +1037,17 @@ export function QueryTabContent({
 
           <DocumentSearchWorkspace
               cluster={activeCluster}
-              indexLabel={effectiveIndexPattern}
-              displayIndexName={effectiveIndexPattern}
+              indexLabel={searchIndexPattern}
+              displayIndexName={searchIndexPattern}
               hits={search.hits}
               from={search.from}
-              queryKey={`${effectiveIndexPattern}:${mode}:${search.query}:${search.advancedBody}:${search.from}:${sortDisplayField ?? ''}:${sortOrder ?? ''}`}
+              queryKey={`${searchIndexPattern}:${mode}:${search.query}:${search.advancedBody}:${search.from}:${sortDisplayField ?? ''}:${sortOrder ?? ''}`}
               total={search.total}
               totalIsLowerBound={search.totalIsLowerBound}
               took={search.took}
               page={search.page}
               totalPages={search.totalPages}
-              loading={search.loading}
+              loading={queryBusy}
               error={search.error}
               forbidden={search.forbidden}
               pagination={pagination}
@@ -989,16 +1075,16 @@ export function QueryTabContent({
                         value={search.advancedBody}
                         onChange={search.setAdvancedBody}
                         error={search.jsonError}
-                        disabled={search.loading}
+                        disabled={queryBusy}
                       />
                       <div className="mt-2 flex flex-wrap items-center gap-2">
                         <button
                           type="button"
                           onClick={handleSearch}
-                          disabled={search.loading}
+                          disabled={queryBusy}
                           className="inline-flex items-center gap-1.5 rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
                         >
-                          {search.loading ? <RefreshCw className="h-4 w-4 animate-spin" /> : null}
+                          {queryBusy ? <RefreshCw className="h-4 w-4 animate-spin" /> : null}
                           Search
                         </button>
                       </div>

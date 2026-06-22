@@ -18,10 +18,10 @@ export type HistogramBucket = {
   label: string;
 };
 
-/** Initial chart state: histogram only, no time filter (matches current search). */
-export const DEFAULT_CHART_PRESET: TimeRangePreset = 'search';
-
 export const DEFAULT_TIME_PRESET: RelativeTimeRangePreset = '15m';
+
+/** Initial chart preset when the time chart is opened or reset. */
+export const DEFAULT_CHART_PRESET: TimeRangePreset = DEFAULT_TIME_PRESET;
 
 const RELATIVE_PRESET_RANGE: Record<
   RelativeTimeRangePreset,
@@ -202,6 +202,11 @@ export function isSearchResultsPreset(preset: TimeRangePreset): boolean {
   return preset === 'search';
 }
 
+/** Map legacy "search" preset to the default time window. */
+export function normalizeChartPreset(preset: TimeRangePreset): TimeRangePreset {
+  return preset === 'search' ? DEFAULT_TIME_PRESET : preset;
+}
+
 /** True when the chart applies a time range filter to document hits (not histogram-only Results). */
 export function isChartTimeFilterActive(
   preset: TimeRangePreset,
@@ -258,17 +263,11 @@ export function resolveTimeSearchResolution(
   bounds: TimeFieldBounds | null,
   brushActive: boolean
 ): TimeRangeResolution {
+  const normalized = normalizeChartPreset(preset);
   if (brushActive) {
     return resolveTimeRangeForIndex(range, bounds);
   }
-  if (isSearchResultsPreset(preset)) {
-    if (!range.field) return { mode: 'skip' };
-    return {
-      mode: 'histogram-only',
-      histogramInterval: resolveHistogramIntervalForUnfilteredSearch(range.field, bounds)
-    };
-  }
-  if (isAllTimePreset(preset)) {
+  if (isAllTimePreset(normalized)) {
     if (!range.field) return { mode: 'skip' };
     const fullRange = buildAllHistogramRange(range.field, bounds);
     if (!fullRange) return { mode: 'skip' };
@@ -283,6 +282,14 @@ export function needsTimeFieldBounds(
 ): boolean {
   if (brushRange != null) return false;
   return preset === 'all';
+}
+
+/** True when min/max aggregations returned usable numeric bounds for the time field. */
+export function hasValidTimeFieldBounds(bounds: TimeFieldBounds | null | undefined): boolean {
+  if (!bounds) return false;
+  const hasMin = typeof bounds.minMs === 'number' && Number.isFinite(bounds.minMs);
+  const hasMax = typeof bounds.maxMs === 'number' && Number.isFinite(bounds.maxMs);
+  return hasMin && hasMax;
 }
 
 /**
@@ -320,7 +327,8 @@ export function resolveTimeRangeForIndex(
   }
 
   const normalized = toAbsoluteTimeRange(range, clampedGte, clampedLte);
-  return { mode: 'filter', range: normalized, histogramRange: normalized };
+  const chartWindow = toAbsoluteTimeRange(range, gteMs, lteMs);
+  return { mode: 'filter', range: normalized, histogramRange: chartWindow };
 }
 
 export function applyMatchNoneQuery(body: Record<string, unknown>): Record<string, unknown> {
@@ -329,19 +337,14 @@ export function applyMatchNoneQuery(body: Record<string, unknown>): Record<strin
 
 
 export function resolvePresetSpanMs(preset: TimeRangePreset, bounds?: TimeFieldBounds | null): number {
-  if (isSearchResultsPreset(preset)) {
+  const normalized = normalizeChartPreset(preset);
+  if (isAllTimePreset(normalized)) {
     if (bounds?.minMs != null && bounds?.maxMs != null) {
       return Math.max(bounds.maxMs - bounds.minMs, 1000);
     }
     return RELATIVE_PRESET_RANGE['30d'].spanMs;
   }
-  if (isAllTimePreset(preset)) {
-    if (bounds?.minMs != null && bounds?.maxMs != null) {
-      return Math.max(bounds.maxMs - bounds.minMs, 1000);
-    }
-    return RELATIVE_PRESET_RANGE['30d'].spanMs;
-  }
-  return RELATIVE_PRESET_RANGE[preset as RelativeTimeRangePreset].spanMs;
+  return RELATIVE_PRESET_RANGE[normalized as RelativeTimeRangePreset].spanMs;
 }
 
 export const TIME_RANGE_PRESETS: Array<{ id: TimeRangePreset; label: string }> = [
@@ -387,7 +390,6 @@ export function getDateFieldFormatFromMappings(
     const node = resolveMappingPropertyNode(props, fieldPath);
     if (!node) continue;
     if (typeof node.format === 'string' && node.format.trim()) return node.format.trim();
-    if (node.type === 'date' || node.type === 'date_nanos') return null;
   }
   return null;
 }
@@ -458,10 +460,11 @@ export function mergeDateFieldsFromMappingsResponse(
 }
 
 export function resolvePresetTimeRange(preset: TimeRangePreset): TimeRangeFilter {
-  if (isSearchResultsPreset(preset) || isAllTimePreset(preset)) {
+  const normalized = normalizeChartPreset(preset);
+  if (isAllTimePreset(normalized)) {
     return { field: '', gte: '', lte: '' };
   }
-  const { gte, lte } = RELATIVE_PRESET_RANGE[preset as RelativeTimeRangePreset];
+  const { gte, lte } = RELATIVE_PRESET_RANGE[normalized as RelativeTimeRangePreset];
   return { field: '', gte, lte };
 }
 
@@ -544,11 +547,12 @@ export function formatAbsoluteDateMsForField(
   if (!Number.isFinite(ms)) return ms;
 
   const fmt = fieldFormat?.trim() ?? '';
-  if (!fmt || fmt === 'epoch_millis' || fmt.includes('epoch_millis')) {
+  const d = new Date(ms);
+
+  if (fmt === 'epoch_millis' || fmt.includes('epoch_millis')) {
     return ms;
   }
 
-  const d = new Date(ms);
   if (fmt.includes('yyyy-MM-dd') && fmt.includes('HH:mm:ss')) {
     return `${d.getUTCFullYear()}-${pad2(d.getUTCMonth() + 1)}-${pad2(d.getUTCDate())} ${pad2(d.getUTCHours())}:${pad2(d.getUTCMinutes())}:${pad2(d.getUTCSeconds())}`;
   }
@@ -558,6 +562,141 @@ export function formatAbsoluteDateMsForField(
   }
 
   return d.toISOString();
+}
+
+export function isElasticsearchDateParseError(message: string): boolean {
+  const lower = message.toLowerCase();
+  return (
+    lower.includes('parse_exception') ||
+    lower.includes('date_time_parse_exception') ||
+    lower.includes('failed to parse date field')
+  );
+}
+
+/** Pull `yyyy-MM-dd HH:mm:ss` from ES 400 error text when present. */
+export function parseElasticsearchDateFormatFromError(message: string): string | null {
+  const match = message.match(/with format \[([^\]]+)\]/i);
+  return match?.[1]?.trim() ?? null;
+}
+
+function isEpochMillisBound(value: unknown): boolean {
+  if (typeof value === 'number') return Number.isFinite(value) && value > 1e11;
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    return /^\d{12,}$/.test(trimmed);
+  }
+  return false;
+}
+
+function epochMillisFromBound(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'string' && /^\d{12,}$/.test(value.trim())) {
+    const parsed = Number(value.trim());
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+}
+
+function rewriteRangeClause(
+  clause: Record<string, unknown>,
+  fieldFormat: string
+): { clause: Record<string, unknown>; changed: boolean } {
+  const range = clause.range;
+  if (!range || typeof range !== 'object' || Array.isArray(range)) {
+    return { clause, changed: false };
+  }
+
+  let changed = false;
+  const nextRange: Record<string, unknown> = {};
+
+  for (const [field, spec] of Object.entries(range as Record<string, unknown>)) {
+    if (!spec || typeof spec !== 'object' || Array.isArray(spec)) {
+      nextRange[field] = spec;
+      continue;
+    }
+    const nextSpec = { ...(spec as Record<string, unknown>) };
+    for (const bound of ['gte', 'gt', 'lte', 'lt'] as const) {
+      const value = nextSpec[bound];
+      if (typeof value === 'string' && /^now/i.test(value.trim())) continue;
+
+      let ms: number | null = null;
+      if (isEpochMillisBound(value)) {
+        ms = epochMillisFromBound(value);
+      } else if (typeof value === 'number' && Number.isFinite(value) && value > 1e11) {
+        ms = value;
+      } else if (typeof value === 'string') {
+        const parsed = Date.parse(value.trim());
+        if (Number.isFinite(parsed)) ms = parsed;
+      }
+
+      if (ms == null) continue;
+
+      const rewritten = formatAbsoluteDateMsForField(ms, fieldFormat);
+      if (rewritten !== value) {
+        nextSpec[bound] = rewritten;
+        changed = true;
+      }
+    }
+    if (changed) {
+      delete nextSpec.format;
+    }
+    nextRange[field] = nextSpec;
+  }
+
+  return changed ? { clause: { range: nextRange }, changed: true } : { clause, changed: false };
+}
+
+function rewriteQueryNode(node: unknown, fieldFormat: string): { node: unknown; changed: boolean } {
+  if (!node || typeof node !== 'object' || Array.isArray(node)) {
+    return { node, changed: false };
+  }
+
+  const obj = node as Record<string, unknown>;
+  if (obj.range) {
+    const rewritten = rewriteRangeClause(obj, fieldFormat);
+    return { node: rewritten.clause, changed: rewritten.changed };
+  }
+
+  if (obj.bool && typeof obj.bool === 'object' && !Array.isArray(obj.bool)) {
+    const bool = { ...(obj.bool as Record<string, unknown>) };
+    let changed = false;
+    for (const key of ['filter', 'must', 'should', 'must_not'] as const) {
+      const clause = bool[key];
+      if (Array.isArray(clause)) {
+        const nextClauses: unknown[] = [];
+        for (const item of clause) {
+          const rewritten = rewriteQueryNode(item, fieldFormat);
+          if (rewritten.changed) changed = true;
+          nextClauses.push(rewritten.node);
+        }
+        bool[key] = nextClauses;
+      } else if (clause) {
+        const rewritten = rewriteQueryNode(clause, fieldFormat);
+        if (rewritten.changed) changed = true;
+        bool[key] = rewritten.node;
+      }
+    }
+    return changed ? { node: { bool }, changed: true } : { node, changed: false };
+  }
+
+  return { node, changed: false };
+}
+
+/** Rewrite epoch-millis range bounds to a string date format (one-shot retry for ES 400s). */
+export function rewriteEpochMillisRangeBoundsInSearchBody(
+  body: Record<string, unknown>,
+  fieldFormat: string
+): { body: Record<string, unknown>; changed: boolean } {
+  const query = body.query;
+  if (!query || typeof query !== 'object' || Array.isArray(query)) {
+    return { body, changed: false };
+  }
+  const rewritten = rewriteQueryNode(query, fieldFormat);
+  if (!rewritten.changed) return { body, changed: false };
+  return {
+    body: { ...body, query: rewritten.node },
+    changed: true
+  };
 }
 
 /** ES date range bound: date math as-is; absolute dates match the field mapping format. */
@@ -664,9 +803,19 @@ export function applyTimeRangeToSearchBody(
   return mergeTimeRangeIntoAdvancedBody(next, range, fieldFormat);
 }
 
+function resolveDateHistogramAggFormat(fieldFormat: string | null | undefined): string | undefined {
+  const fmt = fieldFormat?.trim() ?? '';
+  if (!fmt || fmt.includes('epoch_millis')) return undefined;
+  const base = fmt.split('||')[0]?.trim() ?? fmt;
+  if (base.includes('yyyy-MM-dd') || base.includes('strict_date')) return base;
+  return undefined;
+}
+
 function buildDateHistogramAgg(
   timeField: string,
-  interval: HistogramInterval
+  interval: HistogramInterval,
+  windowRange?: TimeRangeFilter | null,
+  fieldFormat?: string | null
 ): Record<string, unknown> {
   const dateHistogram: Record<string, unknown> = {
     field: timeField,
@@ -674,10 +823,25 @@ function buildDateHistogramAgg(
     time_zone: getBrowserTimeZone()
   };
 
+  const aggFormat = resolveDateHistogramAggFormat(fieldFormat);
+  if (aggFormat) dateHistogram.format = aggFormat;
+
   if (interval.kind === 'calendar_interval') {
     dateHistogram.calendar_interval = interval.value;
   } else {
     dateHistogram.fixed_interval = interval.value;
+  }
+
+  if (windowRange?.field) {
+    const absolute = resolveAbsoluteTimeRangeMs(windowRange);
+    if (absolute && absolute.gteMs <= absolute.lteMs) {
+      const boundsRange = toAbsoluteTimeRange(windowRange, absolute.gteMs, absolute.lteMs);
+      const normalized = normalizeTimeRangeForElasticsearch(boundsRange, fieldFormat);
+      dateHistogram.extended_bounds = {
+        min: normalized.gte,
+        max: normalized.lte
+      };
+    }
   }
 
   return dateHistogram;
@@ -686,15 +850,15 @@ function buildDateHistogramAgg(
 export function mergeHistogramIntoSearchBody(
   searchBody: Record<string, unknown>,
   timeField: string,
-  _windowRange: TimeRangeFilter,
+  windowRange: TimeRangeFilter,
   interval: HistogramInterval,
-  _fieldFormat?: string | null
+  fieldFormat?: string | null
 ): Record<string, unknown> {
   return {
     ...searchBody,
     aggs: {
       time_histogram: {
-        date_histogram: buildDateHistogramAgg(timeField, interval)
+        date_histogram: buildDateHistogramAgg(timeField, interval, windowRange, fieldFormat)
       }
     }
   };
@@ -703,8 +867,9 @@ export function mergeHistogramIntoSearchBody(
 export function buildHistogramSearchBody(
   searchBody: Record<string, unknown>,
   timeField: string,
-  _windowRange: TimeRangeFilter,
-  interval: HistogramInterval
+  windowRange: TimeRangeFilter,
+  interval: HistogramInterval,
+  fieldFormat?: string | null
 ): Record<string, unknown> {
   const { size: _size, from: _from, sort: _sort, aggs: _aggs, ...rest } = searchBody;
 
@@ -714,7 +879,7 @@ export function buildHistogramSearchBody(
     track_total_hits: false,
     aggs: {
       time_histogram: {
-        date_histogram: buildDateHistogramAgg(timeField, interval)
+        date_histogram: buildDateHistogramAgg(timeField, interval, windowRange, fieldFormat)
       }
     }
   };
@@ -732,32 +897,319 @@ export function parseHistogramAggregationResponse(
   const aggs = response?.aggregations as Record<string, unknown> | undefined;
   const hist = aggs?.time_histogram as { buckets?: EsHistogramBucket[] } | undefined;
   const buckets = hist?.buckets ?? [];
-  return buckets.map((bucket) => {
-    const key =
-      typeof bucket.key === 'number'
-        ? bucket.key
-        : typeof bucket.key === 'string'
-          ? Date.parse(bucket.key)
-          : bucket.key_as_string
-            ? Date.parse(bucket.key_as_string)
-            : NaN;
-    return {
-      key,
-      docCount: bucket.doc_count ?? 0,
-      label: formatHistogramTick(key)
-    };
-  }).filter((b) => Number.isFinite(b.key));
+  const parsed = buckets
+    .map((bucket) => {
+      const key =
+        typeof bucket.key === 'number'
+          ? bucket.key
+          : typeof bucket.key === 'string'
+            ? Date.parse(bucket.key)
+            : bucket.key_as_string
+              ? Date.parse(bucket.key_as_string)
+              : NaN;
+      return {
+        key,
+        docCount: bucket.doc_count ?? 0,
+        label: ''
+      };
+    })
+    .filter((b) => Number.isFinite(b.key));
+  const spanMs =
+    parsed.length >= 2 ? parsed[parsed.length - 1].key - parsed[0].key : 0;
+  return parsed.map((b) => ({
+    ...b,
+    label: formatHistogramTick(b.key, spanMs)
+  }));
 }
 
-export function formatHistogramTick(ms: number): string {
+/** True when a chart time window returned documents or non-zero histogram buckets. */
+export function timeChartRangeHasData(
+  buckets: HistogramBucket[],
+  total: number | null,
+  hitCount: number
+): boolean {
+  if (hitCount > 0) return true;
+  if (total != null && total > 0) return true;
+  return buckets.some((bucket) => bucket.docCount > 0);
+}
+
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
+
+/** Format a histogram bucket timestamp for axis labels and tooltips (always includes year). */
+export function formatHistogramTick(ms: number, spanMs = 0): string {
   const d = new Date(ms);
   if (!Number.isFinite(d.getTime())) return '';
+
+  if (spanMs > 365 * MS_PER_DAY) {
+    return d.toLocaleString(undefined, { month: 'short', year: 'numeric' });
+  }
+  if (spanMs > 7 * MS_PER_DAY) {
+    return d.toLocaleString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+  }
   return d.toLocaleString(undefined, {
     month: 'short',
     day: 'numeric',
+    year: 'numeric',
     hour: '2-digit',
     minute: '2-digit'
   });
+}
+
+/** Size bars from median bucket gap in pixel space so they never overlap on a linear time axis. */
+export function computeHistogramBarSizePx(
+  buckets: HistogramBucket[],
+  plotWidthPx: number,
+  opts?: { marginLeft?: number; marginRight?: number; yAxisWidth?: number; maxBarPx?: number }
+): number {
+  const marginLeft = opts?.marginLeft ?? 0;
+  const marginRight = opts?.marginRight ?? 12;
+  const yAxisWidth = opts?.yAxisWidth ?? 56;
+  const maxBarPx = opts?.maxBarPx ?? 28;
+
+  if (buckets.length === 0 || plotWidthPx <= 0) return 8;
+
+  const inner = Math.max(1, plotWidthPx - marginLeft - marginRight - yAxisWidth);
+  const sorted = [...buckets].sort((a, b) => a.key - b.key);
+  if (sorted.length === 1) {
+    return Math.min(maxBarPx, Math.max(4, Math.floor(inner * 0.04)));
+  }
+
+  const domainSpan = Math.max(sorted[sorted.length - 1].key - sorted[0].key, 1);
+  const intervals: number[] = [];
+  for (let i = 1; i < sorted.length; i++) {
+    const gap = sorted[i].key - sorted[i - 1].key;
+    if (gap > 0) intervals.push(gap);
+  }
+
+  let medianInterval = domainSpan / (sorted.length - 1);
+  if (intervals.length > 0) {
+    intervals.sort((a, b) => a - b);
+    medianInterval = intervals[Math.floor(intervals.length / 2)] ?? medianInterval;
+  }
+
+  const pxPerMs = inner / domainSpan;
+  const barPx = medianInterval * pxPerMs * 0.82;
+  return Math.max(2, Math.min(maxBarPx, Math.floor(barPx)));
+}
+
+function medianBucketIntervalMs(buckets: HistogramBucket[]): number {
+  const sorted = [...buckets].sort((a, b) => a.key - b.key);
+  if (sorted.length < 2) return 60_000;
+  const intervals: number[] = [];
+  for (let i = 1; i < sorted.length; i++) {
+    const gap = sorted[i].key - sorted[i - 1].key;
+    if (gap > 0) intervals.push(gap);
+  }
+  if (intervals.length === 0) return 60_000;
+  intervals.sort((a, b) => a - b);
+  return intervals[Math.floor(intervals.length / 2)] ?? 60_000;
+}
+
+function resolveHalfBucketPadMs(windowRange: TimeRangeFilter, buckets: HistogramBucket[]): number {
+  if (buckets.length >= 2) {
+    return Math.max(1, Math.floor(medianBucketIntervalMs(buckets) / 2));
+  }
+  const spanMs = estimateRangeSpanMs(windowRange);
+  const intervalMs = computeHistogramIntervalMsForSpan(spanMs);
+  return Math.max(1, Math.floor(intervalMs / 2));
+}
+
+function resolveHistogramVisualWindowMs(
+  windowRange: TimeRangeFilter,
+  buckets: HistogramBucket[],
+  bounds?: TimeFieldBounds | null
+): { gteMs: number; lteMs: number } | null {
+  const sorted = [...buckets].sort((a, b) => a.key - b.key);
+  const absolute = resolveAbsoluteTimeRangeMs(windowRange);
+
+  if (absolute) {
+    if (sorted.length === 0) return absolute;
+
+    const step = sorted.length >= 2 ? medianBucketIntervalMs(sorted) : computeHistogramIntervalMsForSpan(Math.max(absolute.lteMs - absolute.gteMs, 1000));
+    const tolerance = Math.max(step, 1);
+    const overlapsWindow = sorted.some(
+      (bucket) => bucket.key >= absolute.gteMs - tolerance && bucket.key <= absolute.lteMs + tolerance
+    );
+    if (overlapsWindow) return absolute;
+
+    const first = sorted[0].key;
+    const last = sorted[sorted.length - 1].key;
+    const bucketSpan = Math.max(last - first, step);
+    const windowSpan = Math.max(absolute.lteMs - absolute.gteMs, step);
+
+    // Some date fields are formatted without timezone. Elasticsearch returns bucket
+    // keys in a shifted epoch space, while the UI range is based on browser time.
+    // If the response is a same-sized time window with no overlap, render in the
+    // bucket key space instead of treating valid data as out-of-window.
+    if (bucketSpan <= windowSpan + step * 2) {
+      return { gteMs: first, lteMs: Math.max(last, first + windowSpan) };
+    }
+
+    return absolute;
+  }
+
+  if (bounds?.minMs != null && bounds?.maxMs != null && bounds.minMs <= bounds.maxMs) {
+    return { gteMs: bounds.minMs, lteMs: bounds.maxMs };
+  }
+
+  if (sorted.length === 0) return null;
+  return { gteMs: sorted[0].key, lteMs: sorted[sorted.length - 1].key };
+}
+
+/**
+ * X-axis domain aligned with the active time filter (Kibana/Discover-style).
+ * The domain must come from the selected window, not from returned buckets; otherwise
+ * stale/out-of-window buckets can stretch the chart and visually pin bars to one side.
+ */
+export function resolveHistogramXDomain(
+  windowRange: TimeRangeFilter,
+  buckets: HistogramBucket[],
+  bounds?: TimeFieldBounds | null
+): [number, number] {
+  const visualWindow = resolveHistogramVisualWindowMs(windowRange, buckets, bounds);
+  if (visualWindow) return [visualWindow.gteMs, visualWindow.lteMs];
+
+  const sorted = [...buckets].sort((a, b) => a.key - b.key);
+  if (sorted.length === 0) return [0, 1];
+
+  const min = sorted[0].key;
+  const max = sorted[sorted.length - 1].key;
+  if (max <= min) {
+    const half = resolveHalfBucketPadMs(windowRange, buckets);
+    return [min - half, min + half];
+  }
+  return [min, max];
+}
+
+export function resolveHistogramChartSpanMs(
+  windowRange: TimeRangeFilter,
+  buckets: HistogramBucket[],
+  bounds?: TimeFieldBounds | null
+): number {
+  const absolute = resolveAbsoluteTimeRangeMs(windowRange);
+  if (absolute) return Math.max(absolute.lteMs - absolute.gteMs, 0);
+
+  if (bounds?.minMs != null && bounds?.maxMs != null) {
+    return Math.max(bounds.maxMs - bounds.minMs, 0);
+  }
+
+  if (buckets.length >= 2) {
+    const sorted = [...buckets].sort((a, b) => a.key - b.key);
+    return sorted[sorted.length - 1].key - sorted[0].key;
+  }
+  return 0;
+}
+
+/**
+ * Fill the histogram into a complete, evenly-spaced series across the selected window.
+ * Returned buckets outside the active window are intentionally ignored; the visual time
+ * axis is owned by the selected range, not by Elasticsearch's response extent.
+ */
+export function padHistogramBucketsToWindow(
+  buckets: HistogramBucket[],
+  windowRange: TimeRangeFilter,
+  bounds?: TimeFieldBounds | null
+): HistogramBucket[] {
+  if (buckets.length === 0) return buckets;
+
+  const sorted = [...buckets].sort((a, b) => a.key - b.key);
+  const visualWindow = resolveHistogramVisualWindowMs(windowRange, sorted, bounds);
+  if (!visualWindow) return sorted;
+  const { gteMs, lteMs } = visualWindow;
+
+  const step =
+    sorted.length >= 2
+      ? medianBucketIntervalMs(sorted)
+      : computeHistogramIntervalMsForSpan(Math.max(lteMs - gteMs, 1000));
+  if (!Number.isFinite(step) || step <= 0) return sorted;
+
+  const startKey = Math.floor(gteMs / step) * step;
+  const endKey = Math.ceil(lteMs / step) * step;
+
+  const count = Math.floor((endKey - startKey) / step) + 1;
+  if (count <= 0 || count > MAX_HISTOGRAM_BUCKETS * 3) return sorted;
+
+  const docCountByKey = new Map<number, number>();
+  for (const bucket of sorted) {
+    if (bucket.key < startKey || bucket.key > endKey) continue;
+    const alignedKey = startKey + Math.round((bucket.key - startKey) / step) * step;
+    if (alignedKey < startKey || alignedKey > endKey) continue;
+    docCountByKey.set(alignedKey, (docCountByKey.get(alignedKey) ?? 0) + bucket.docCount);
+  }
+
+  const spanForLabel = endKey - startKey;
+  const result: HistogramBucket[] = [];
+  for (let i = 0; i < count; i++) {
+    const key = startKey + i * step;
+    result.push({
+      key,
+      docCount: docCountByKey.get(key) ?? 0,
+      label: formatHistogramTick(key, spanForLabel)
+    });
+  }
+  return result;
+}
+
+export function formatHistogramIntervalLabel(interval: HistogramInterval): string {
+  if (interval.kind === 'calendar_interval') {
+    const labels: Record<string, string> = {
+      '1h': '1 hour',
+      '1d': '1 day',
+      '1w': '1 week',
+      '1M': '1 month'
+    };
+    return labels[interval.value] ?? interval.value;
+  }
+  const match = /^(\d+)([smhd])$/i.exec(interval.value.trim());
+  if (!match) return interval.value;
+  const amount = Number(match[1]);
+  const unit = match[2].toLowerCase();
+  const names: Record<string, string> = {
+    s: 'second',
+    m: 'minute',
+    h: 'hour',
+    d: 'day'
+  };
+  const name = names[unit] ?? unit;
+  return `${amount} ${name}${amount === 1 ? '' : 's'}`;
+}
+
+function formatHistogramFooterTimestamp(ms: number): string {
+  const d = new Date(ms);
+  if (!Number.isFinite(d.getTime())) return String(ms);
+  const date = d.toLocaleString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric'
+  });
+  const time = d.toLocaleTimeString(undefined, {
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false
+  });
+  const msPart = String(d.getMilliseconds()).padStart(3, '0');
+  return `${date} @ ${time}.${msPart}`;
+}
+
+/** Kibana-style footer: absolute range + auto interval label. */
+export function formatHistogramFooterLabel(
+  range: TimeRangeFilter,
+  interval: HistogramInterval,
+  bounds?: TimeFieldBounds | null
+): string {
+  const absolute = resolveAbsoluteTimeRangeMs(range);
+  const intervalLabel = formatHistogramIntervalLabel(interval);
+
+  if (absolute) {
+    return `${formatHistogramFooterTimestamp(absolute.gteMs)} - ${formatHistogramFooterTimestamp(absolute.lteMs)} (interval: Auto - ${intervalLabel})`;
+  }
+
+  if (bounds?.minMs != null && bounds?.maxMs != null) {
+    return `${formatHistogramFooterTimestamp(bounds.minMs)} - ${formatHistogramFooterTimestamp(bounds.maxMs)} (interval: Auto - ${intervalLabel})`;
+  }
+
+  return `interval: Auto - ${intervalLabel}`;
 }
 
 export function resolveChartFilterRange(
@@ -766,10 +1218,11 @@ export function resolveChartFilterRange(
   brushRange: TimeRangeFilter | null
 ): TimeRangeFilter {
   if (brushRange) return brushRange;
-  if ((isSearchResultsPreset(preset) || isAllTimePreset(preset)) && field) {
+  const normalized = normalizeChartPreset(preset);
+  if (isAllTimePreset(normalized) && field) {
     return { field, gte: '', lte: '' };
   }
-  return withTimeField(resolvePresetTimeRange(preset), field);
+  return withTimeField(resolvePresetTimeRange(normalized), field);
 }
 
 export function formatTimeRangeLabel(

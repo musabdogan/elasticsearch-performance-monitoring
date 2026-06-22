@@ -20,6 +20,7 @@ import {
   getHealthReport,
   getCatNodesExtended,
   getCatNodeAttrs,
+  getCatThreadPool,
   getClusterSettings,
   checkClusterHealth,
   getNetworkErrorMessage,
@@ -44,6 +45,7 @@ import { sanitizeClusterInput } from '@/utils/clusterBackup';
 import type { AlertInstance, AlertRule, AlertSettings, AlertStats } from '../types/alerts';
 import { getStoredValue, setStoredValue } from '@/utils/storage';
 import { formatAlertValue } from '@/utils/format';
+import { summarizeThreadPool } from '@/utils/searchDiagnosis';
 
 const POLL_STORAGE_KEY = 'eum/poll-interval';
 const CLUSTERS_STORAGE_KEY = 'eum/clusters';
@@ -427,7 +429,8 @@ export function MonitoringProvider({ children }: { children: ReactNode }) {
         throw healthErr;
       });
 
-      const [nodeStats, indexStats, indices, health, healthReport, catNodesExtended, clusterSettings, nodeAttrsRows] = await Promise.all([
+      const [nodeStats, indexStats, indices, health, healthReport, catNodesExtended, clusterSettings, nodeAttrsRows, threadPoolRows] =
+        await Promise.all([
         getNodeStats(activeCluster, signal),
         getIndexStats(activeCluster, signal),
         getIndices(activeCluster, signal),
@@ -435,7 +438,8 @@ export function MonitoringProvider({ children }: { children: ReactNode }) {
         getHealthReport(activeCluster, signal, healthReportUnsupportedRef),
         getCatNodesExtended(activeCluster, signal),
         getClusterSettings(activeCluster, signal),
-        getCatNodeAttrs(activeCluster, signal)
+        getCatNodeAttrs(activeCluster, signal),
+        getCatThreadPool(activeCluster, signal).catch(() => [])
       ]);
 
       // Derive NodeInfo[] from catNodesExtended so we don't call GET _cat/nodes twice (was getNodes + getCatNodesExtended)
@@ -479,7 +483,16 @@ export function MonitoringProvider({ children }: { children: ReactNode }) {
       };
 
       const newAlerts = alertEngine.evaluateAlerts(alertSnapshot, activeCluster.label);
-      const activeAlerts = alertEngine.getActiveAlerts();
+      const poolSummary = summarizeThreadPool(Array.isArray(threadPoolRows) ? threadPoolRows : []);
+      const diagnosisContext = {
+        searchQueueMax: poolSummary.searchQueue,
+        searchActiveTotal: poolSummary.searchActive,
+        dominantPool: poolSummary.dominantPool
+      };
+      const cpuPerfRuleIds = new Set(['high-cpu-usage', 'high-cpu-load', 'slow-search-critical']);
+      const activeAlerts = alertEngine.getActiveAlerts().map((alert) =>
+        cpuPerfRuleIds.has(alert.ruleId) ? { ...alert, diagnosisContext } : alert
+      );
       const stats = alertEngine.getAlertStats();
       setAlerts(activeAlerts);
       setAlertStats(stats);

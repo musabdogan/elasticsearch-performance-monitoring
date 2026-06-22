@@ -12,8 +12,6 @@ import {
   type TimeRangePreset
 } from '@/utils/queryTimeHistogram';
 
-const FALLBACK_TIME_FIELDS = ['@timestamp', 'timestamp'] as const;
-
 type UseQueryTimeHistogramStateOptions = {
   indexPattern: string;
   enabled: boolean;
@@ -63,17 +61,14 @@ export function useQueryTimeHistogramState({
     if (isAllIndicesQueryPattern(indexPattern)) {
       if (indexDetailsLoading) return;
 
-      if (indexDetails) {
-        const fields = mergeDateFieldsFromMappingsResponse(indexDetails);
-        if (fields.length > 0) {
-          setDateFields(fields);
-          setSelectedTimeField(pickDefaultTimeField(fields) ?? fields[0]);
-          return;
-        }
+      const fields = indexDetails ? mergeDateFieldsFromMappingsResponse(indexDetails) : [];
+      if (fields.length > 0) {
+        setDateFields(fields);
+        setSelectedTimeField(pickDefaultTimeField(fields) ?? fields[0]);
+      } else {
+        setDateFields([]);
+        setSelectedTimeField('');
       }
-
-      setDateFields([...FALLBACK_TIME_FIELDS]);
-      setSelectedTimeField('@timestamp');
       return;
     }
 
@@ -83,13 +78,16 @@ export function useQueryTimeHistogramState({
 
     const fields = mergeDateFieldsFromMappingsResponse(indexDetails);
     if (fields.length === 0) {
-      setDateFields([...FALLBACK_TIME_FIELDS]);
-      setSelectedTimeField('@timestamp');
+      setDateFields([]);
+      setSelectedTimeField('');
       return;
     }
     setDateFields(fields);
     setSelectedTimeField(pickDefaultTimeField(fields) ?? fields[0]);
   }, [visible, indexDetails, indexDetailsLoading, indexPattern]);
+
+  const hasMappingDateField = dateFields.length > 0 && Boolean(selectedTimeField);
+  const chartVisible = visible && hasMappingDateField;
 
   const windowRange = useMemo(() => {
     const base = resolvePresetTimeRange(timePreset);
@@ -103,9 +101,9 @@ export function useQueryTimeHistogramState({
 
   /** Time filter applies only when the chart is expanded. */
   const timeRangeForSearch =
-    visible && !collapsed && selectedTimeField ? activeFilterRange : null;
+    chartVisible && !collapsed && selectedTimeField ? activeFilterRange : null;
 
-  const isReadyForSearch = visible && !indexDetailsLoading && Boolean(selectedTimeField);
+  const isReadyForSearch = chartVisible && !indexDetailsLoading && Boolean(selectedTimeField);
 
   const handlePresetChange = useCallback((preset: TimeRangePreset) => {
     setTimePreset(preset);
@@ -124,7 +122,7 @@ export function useQueryTimeHistogramState({
   const clearBrushRange = useCallback(() => setBrushRange(null), []);
 
   return {
-    visible,
+    visible: chartVisible,
     collapsed,
     setCollapsed,
     timePreset,

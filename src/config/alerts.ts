@@ -358,25 +358,25 @@ export const ALERT_DETAIL_CONFIG: Record<string, { whatWasDetected: string; reco
   'high-cpu-usage': {
     whatWasDetected: 'CPU usage is critically high. Search and indexing performance can be impacted.',
     recommendations: [
-      'Scale out with more nodes',
-      'Identify and optimize slow queries',
-      'Check GET _nodes/hot_threads for hotspots'
+      'Open Active searches in the Indices tab to inspect in-flight queries',
+      'Check GET _nodes/hot_threads for hotspots on busy data nodes',
+      'Scale out or optimize heavy aggregations and large terms filters'
     ]
   },
   'high-cpu-load': {
     whatWasDetected: 'CPU usage is high. Performance may be degraded.',
     recommendations: [
-      'Monitor query and indexing load',
-      'Consider scaling out or optimizing queries',
-      'Check thread pool stats: GET _cat/thread_pool?v'
+      'Open Active searches in the Indices tab',
+      'Check thread pool stats: GET _cat/thread_pool?v',
+      'Consider scaling out or optimizing queries'
     ]
   },
   'slow-search-critical': {
     whatWasDetected: 'Search latency is critically high. User experience can be severely impacted.',
     recommendations: [
-      'Identify slow queries via slow query log',
-      'Add or optimize indices for search patterns',
-      'Scale search capacity or add replicas'
+      'Open Active searches to find long-running queries',
+      'Use Index diagnosis on slow indices from Indexing & Search',
+      'Identify slow queries via slow query log if enabled'
     ]
   },
   'slow-indexing': {

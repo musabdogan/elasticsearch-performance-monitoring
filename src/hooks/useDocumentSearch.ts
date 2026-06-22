@@ -7,7 +7,6 @@ import {
   parseSearchTotal
 } from '@/utils/indexSearchQuery';
 import {
-  applyTrackTotalHitsPolicy,
   buildAdvancedSearchBody,
   buildSimpleSearchBody,
   DEFAULT_SIMPLE_QUERY,
@@ -18,9 +17,14 @@ import {
 import {
   applyMatchNoneQuery,
   applyTimeRangeToSearchBody,
+  buildHistogramSearchBody,
+  isElasticsearchDateParseError,
   mergeHistogramIntoSearchBody,
+  parseElasticsearchDateFormatFromError,
   parseHistogramAggregationResponse,
+  rewriteEpochMillisRangeBoundsInSearchBody,
   resolveHistogramInterval,
+  resolveHistogramIntervalForUnfilteredSearch,
   type HistogramBucket,
   type TimeRangeFilter,
   type TimeRangeResolution
@@ -94,7 +98,7 @@ export function useDocumentSearch(
       mode?: QueryMode;
     }) => Promise<void>) | null
   >(null);
-  const initialAutoRunKeyRef = useRef<string | null>(null);
+  const initialAutoRunClusterRef = useRef<string | null>(null);
   const defaultSortRef = useRef(options?.defaultSort ?? []);
   const queryRef = useRef(query);
   const advancedBodyRef = useRef(advancedBody);
@@ -117,32 +121,27 @@ export function useDocumentSearch(
     return defaultSortRef.current;
   }, []);
 
-  const reset = useCallback(() => {
+  const clearStaleResults = useCallback(() => {
     abortRef.current?.abort();
     abortRef.current = null;
-    setQuery(DEFAULT_SIMPLE_QUERY);
-    setAdvancedBody('');
-    setSort([]);
-    setSize(DEFAULT_SIZE);
-    setFrom(0);
     setHits([]);
-    setHitsIndexPattern(indexPattern);
+    setHitsIndexPattern('');
     setTotal(null);
     setTotalIsLowerBound(false);
     setTook(null);
     setError(null);
-    setJsonError(null);
     setForbidden(false);
-    setInitialized(false);
-    setLastRequestBody(null);
     setHistogramBuckets([]);
     setHistogramError(null);
-    initialAutoRunKeyRef.current = null;
-  }, [indexPattern]);
+  }, []);
 
   useEffect(() => {
-    reset();
-  }, [indexPattern, reset]);
+    clearStaleResults();
+  }, [indexPattern, clearStaleResults]);
+
+  useEffect(() => {
+    initialAutoRunClusterRef.current = null;
+  }, [cluster?.label, cluster?.baseUrl]);
 
   const buildBody = useCallback(
     (
@@ -153,7 +152,8 @@ export function useDocumentSearch(
       nextSize: number,
       nextSort: SortRule[],
       applyTimeRange = true,
-      includeHistogram = true
+      includeHistogram = true,
+      histogramOnly = false
     ): { body: Record<string, unknown> | null; jsonError: string | null } => {
       let body: Record<string, unknown> | null = null;
       let jsonError: string | null = null;
@@ -181,6 +181,37 @@ export function useDocumentSearch(
           body = applyMatchNoneQuery(body);
         } else if (resolution.mode === 'filter') {
           body = applyTimeRangeToSearchBody(body, resolution.range, nextMode, nextQuery, timeFieldFormat);
+        }
+
+        if (histogramOnly) {
+          if (resolution.mode === 'filter' && resolution.histogramRange) {
+            const interval = resolveHistogramInterval(resolution.histogramRange);
+            return {
+              body: buildHistogramSearchBody(body, timeField, resolution.histogramRange, interval, timeFieldFormat),
+              jsonError: null
+            };
+          }
+          if (resolution.mode === 'histogram-only') {
+            return {
+              body: buildHistogramSearchBody(
+                body,
+                timeField,
+                { field: timeField, gte: '', lte: '' },
+                resolution.histogramInterval
+              ),
+              jsonError: null
+            };
+          }
+          const fallbackInterval = resolveHistogramIntervalForUnfilteredSearch(timeField, null);
+          return {
+            body: buildHistogramSearchBody(
+              body,
+              timeField,
+              { field: timeField, gte: '', lte: '' },
+              fallbackInterval
+            ),
+            jsonError: null
+          };
         }
 
         if (includeHistogram) {
@@ -218,8 +249,6 @@ export function useDocumentSearch(
         }
       }
 
-      body = applyTrackTotalHitsPolicy(body, indexPattern);
-
       return { body, jsonError };
     },
     [indexPattern, options?.getTimeRange, options?.getHistogramConfig, options?.getTimeSearchContext]
@@ -249,7 +278,7 @@ export function useDocumentSearch(
     [buildBody]
   );
 
-  const runSearch = useCallback(
+  const runSearchNow = useCallback(
     async (opts?: {
       query?: string;
       advancedBody?: string;
@@ -257,9 +286,12 @@ export function useDocumentSearch(
       size?: number;
       sort?: SortRule[];
       mode?: QueryMode;
+      /** Fetch histogram only (size 0) — does not update document hits. */
+      histogramOnly?: boolean;
     }) => {
       if (!cluster || !indexPattern.trim() || !enabled) return;
 
+      const histogramOnly = opts?.histogramOnly ?? false;
       const nextMode = opts?.mode ?? modeRef.current;
       const nextQuery = opts?.query ?? queryRef.current;
       const nextAdvanced = opts?.advancedBody ?? advancedBodyRef.current;
@@ -275,7 +307,10 @@ export function useDocumentSearch(
         nextAdvanced,
         nextFrom,
         nextSize,
-        nextSort
+        nextSort,
+        true,
+        true,
+        histogramOnly
       );
 
       if (!body) {
@@ -297,14 +332,19 @@ export function useDocumentSearch(
 
       const hasHistogram = Boolean(body.aggs);
 
-      try {
-        const res: SearchResponse = await searchIndexDocuments(
-          cluster,
-          indexPattern,
-          body,
-          controller.signal
-        );
-        if (controller.signal.aborted) return;
+      const applySearchResponse = (
+        res: SearchResponse,
+        requestBody: Record<string, unknown>
+      ) => {
+        if (histogramOnly) {
+          setHistogramBuckets(
+            parseHistogramAggregationResponse(res as unknown as Record<string, unknown>)
+          );
+          setHistogramError(null);
+          setLastRequestBody(requestBody);
+          setInitialized(true);
+          return;
+        }
 
         const parsedTotal = parseSearchTotal(res.hits?.total);
         setHits(res.hits?.hits ?? []);
@@ -317,7 +357,7 @@ export function useDocumentSearch(
         setFrom(nextFrom);
         setSize(nextSize);
         setSort(nextSort);
-        setLastRequestBody(body);
+        setLastRequestBody(requestBody);
         setSearchRevision((rev) => rev + 1);
 
         if (hasHistogram) {
@@ -329,6 +369,36 @@ export function useDocumentSearch(
         }
 
         setInitialized(true);
+      };
+
+      try {
+        let requestBody = body;
+        let res: SearchResponse;
+
+        try {
+          res = await searchIndexDocuments(cluster, indexPattern, requestBody, controller.signal);
+        } catch (firstError) {
+          if (controller.signal.aborted) return;
+
+          const firstMsg = firstError instanceof Error ? firstError.message : String(firstError);
+          if (!isElasticsearchDateParseError(firstMsg)) {
+            throw firstError;
+          }
+
+          const retryFormat =
+            parseElasticsearchDateFormatFromError(firstMsg) ?? 'yyyy-MM-dd HH:mm:ss';
+          const rewritten = rewriteEpochMillisRangeBoundsInSearchBody(requestBody, retryFormat);
+          if (!rewritten.changed) {
+            throw firstError;
+          }
+
+          requestBody = rewritten.body;
+          res = await searchIndexDocuments(cluster, indexPattern, requestBody, controller.signal);
+        }
+
+        if (controller.signal.aborted) return;
+
+        applySearchResponse(res, requestBody);
       } catch (e) {
         if (controller.signal.aborted) return;
         const msg = e instanceof Error ? e.message : 'Search failed';
@@ -350,6 +420,23 @@ export function useDocumentSearch(
     [cluster, indexPattern, enabled, buildBody, resolveEffectiveSort, options?.sanitizeSort]
   );
 
+  const runSearchNowRef = useRef(runSearchNow);
+  runSearchNowRef.current = runSearchNow;
+
+  const coalescedRunOptsRef = useRef<Parameters<typeof runSearchNow>[0] | null>(null);
+  const coalesceRunScheduledRef = useRef(false);
+
+  const runSearch = useCallback(async (opts?: Parameters<typeof runSearchNow>[0]) => {
+    coalescedRunOptsRef.current = { ...coalescedRunOptsRef.current, ...opts };
+    if (coalesceRunScheduledRef.current) return;
+    coalesceRunScheduledRef.current = true;
+    await new Promise<void>((resolve) => queueMicrotask(resolve));
+    coalesceRunScheduledRef.current = false;
+    const merged = coalescedRunOptsRef.current;
+    coalescedRunOptsRef.current = null;
+    await runSearchNowRef.current(merged ?? undefined);
+  }, []);
+
   runSearchRef.current = runSearch;
 
   useEffect(() => {
@@ -357,9 +444,9 @@ export function useDocumentSearch(
     if (options?.autoRun === false) return;
     if (options?.autoRunWhenReady === false) return;
 
-    const autoRunKey = `${cluster.label ?? cluster.baseUrl}:${indexPattern}`;
-    if (initialAutoRunKeyRef.current === autoRunKey) return;
-    initialAutoRunKeyRef.current = autoRunKey;
+    const clusterKey = cluster.label ?? cluster.baseUrl;
+    if (initialAutoRunClusterRef.current === clusterKey) return;
+    initialAutoRunClusterRef.current = clusterKey;
 
     void runSearchRef.current?.({
       query: options?.simpleQuery ?? queryRef.current,

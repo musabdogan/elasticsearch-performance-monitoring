@@ -37,6 +37,7 @@ interface IndexTableProps {
   loading?: boolean;
   variant?: 'plain' | 'panel';
   onOpenIndexDetails: OpenIndexDetailsFn;
+  onOpenIndexDiagnosis?: (indexName: string, searchLatencyMs: number) => void;
 }
 
 const IndexTable = memo<IndexTableProps>(({
@@ -48,7 +49,8 @@ const IndexTable = memo<IndexTableProps>(({
   pollIntervalMs = 5000,
   loading = false,
   variant = 'plain',
-  onOpenIndexDetails
+  onOpenIndexDetails,
+  onOpenIndexDiagnosis
 }) => {
   const isPanel = variant === 'panel';
   const [searchTerm, setSearchTerm] = useState('');
@@ -464,11 +466,29 @@ const IndexTable = memo<IndexTableProps>(({
               header: 'Search Latency',
               align: 'right',
               sortable: true,
-              render: (row: typeof sortedData[0]) => (
-                <span className={`font-mono tab-content-value ${getLatencyTextClass('search', row.searchLatency)}`}>
-                  {formatLatency(row.searchLatency)}
-                </span>
-              )
+              render: (row: typeof sortedData[0]) => {
+                const latencyClass = getLatencyTextClass('search', row.searchLatency);
+                const showActiveQueriesLink = row.searchLatency >= 100 && onOpenIndexDiagnosis;
+                return (
+                  <div className="flex flex-col items-end gap-0.5">
+                    <span className={`font-mono tab-content-value ${latencyClass}`}>
+                      {formatLatency(row.searchLatency)}
+                    </span>
+                    {showActiveQueriesLink && (
+                      <button
+                        type="button"
+                        className="text-[10px] text-blue-600 dark:text-blue-400 hover:underline"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onOpenIndexDiagnosis(row.index, row.searchLatency);
+                        }}
+                      >
+                        Active queries
+                      </button>
+                    )}
+                  </div>
+                );
+              }
             }
           ]}
           emptyMessage="No indices found"
