@@ -42,6 +42,7 @@ import type {
 } from '@/types/api';
 import type { ClusterConnection, CreateClusterInput } from '@/types/app';
 import { sanitizeClusterInput } from '@/utils/clusterBackup';
+import { getClusterConnectionKey } from '@/utils/clusterConnectionKey';
 import type { AlertInstance, AlertRule, AlertSettings, AlertStats } from '../types/alerts';
 import { getStoredValue, setStoredValue } from '@/utils/storage';
 import { formatAlertValue } from '@/utils/format';
@@ -81,6 +82,8 @@ type MonitoringContextValue = {
   statusSummary: Record<ClusterStatus, number>;
   clusters: ClusterConnection[];
   activeCluster: ClusterConnection | null;
+  /** Changes only when label, URL, or auth change — not on cluster_name/uuid metadata updates. */
+  activeClusterConnectionKey: string;
   setActiveCluster: (clusterLabel: string) => void;
   addCluster: (input: CreateClusterInput) => Promise<void>;
   importClusters: (inputs: CreateClusterInput[]) => number;
@@ -219,6 +222,10 @@ export function MonitoringProvider({ children }: { children: ReactNode }) {
   const activeCluster =
     clusters.find((cluster) => cluster.label === activeClusterLabel) ?? clusters[0] ?? null;
 
+  const activeClusterConnectionKey = getClusterConnectionKey(activeCluster);
+  const activeClusterRef = useRef(activeCluster);
+  activeClusterRef.current = activeCluster;
+
   const normalizeClusterBaseUrl = useCallback((raw: string): string => {
     const trimmed = (raw ?? '').trim().replace(/\/$/, '');
     if (!trimmed) return trimmed;
@@ -248,7 +255,7 @@ export function MonitoringProvider({ children }: { children: ReactNode }) {
     } else {
       setStoredValue(ACTIVE_CLUSTER_KEY, '');
     }
-  }, [activeCluster]);
+  }, [activeCluster?.label]);
 
   const abortInflightRequests = useCallback(() => {
     if (abortControllerRef.current) {
@@ -282,6 +289,7 @@ export function MonitoringProvider({ children }: { children: ReactNode }) {
   const fetchAll = useCallback(async () => {
     let controller: AbortController | null = null;
     try {
+      const activeCluster = activeClusterRef.current;
       if (!activeCluster) {
         setError(null);
         setLoading(false);
@@ -380,11 +388,11 @@ export function MonitoringProvider({ children }: { children: ReactNode }) {
 
       abortInflightRequests();
 
-      if (activeCluster) {
-        const uri = activeCluster.baseUrl.replace(/\/$/, '');
+      if (activeClusterRef.current) {
+        const uri = activeClusterRef.current.baseUrl.replace(/\/$/, '');
         const userMessage = `Network error, cannot access your cluster. Cluster uri: ${uri}`;
         if (isTimeoutOrNetwork) {
-          markClusterUnreachable(activeCluster, userMessage);
+          markClusterUnreachable(activeClusterRef.current, userMessage);
         } else {
           setError(message);
           setConnectionFailed(true);
@@ -407,10 +415,11 @@ export function MonitoringProvider({ children }: { children: ReactNode }) {
         abortControllerRef.current = null;
       }
     }
-  }, [activeCluster, connectionFailed, connectionLost, abortInflightRequests, markClusterUnreachable]);
+  }, [activeClusterConnectionKey, connectionFailed, connectionLost, abortInflightRequests, markClusterUnreachable]);
 
   /** Alert-only fetch: runs every 1 min, fetches all APIs with _alert=1, evaluates alerts. Completely separate from fetchAll. */
   const fetchAlerts = useCallback(async () => {
+    const activeCluster = activeClusterRef.current;
     if (!activeCluster || connectionFailed || connectionLost) return;
     let controller: AbortController | null = null;
     try {
@@ -519,9 +528,10 @@ export function MonitoringProvider({ children }: { children: ReactNode }) {
         alertAbortControllerRef.current = null;
       }
     }
-  }, [activeCluster, connectionFailed, connectionLost]);
+  }, [activeClusterConnectionKey, connectionFailed, connectionLost]);
 
   const refreshNodes = useCallback(async () => {
+    const activeCluster = activeClusterRef.current;
     if (!activeCluster || connectionFailed || connectionLost) return;
     setNodesLoading(true);
     setNodesError(null);
@@ -544,9 +554,10 @@ export function MonitoringProvider({ children }: { children: ReactNode }) {
     } finally {
       setNodesLoading(false);
     }
-  }, [activeCluster, connectionFailed, connectionLost]);
+  }, [activeClusterConnectionKey, connectionFailed, connectionLost]);
 
   const retryConnection = useCallback(async () => {
+    const activeCluster = activeClusterRef.current;
     if (!activeCluster) {
       return;
     }
@@ -573,15 +584,16 @@ export function MonitoringProvider({ children }: { children: ReactNode }) {
       setLoading(false);
 
       autoRetryIntervalRef.current = setInterval(async () => {
-        if (!activeCluster) {
+        const cluster = activeClusterRef.current;
+        if (!cluster) {
           if (autoRetryIntervalRef.current) {
             clearInterval(autoRetryIntervalRef.current);
             autoRetryIntervalRef.current = null;
           }
           return;
         }
-        
-        const autoHealthResult = await checkClusterHealth(activeCluster);
+
+        const autoHealthResult = await checkClusterHealth(cluster);
         if (autoHealthResult.success) {
           if (autoRetryIntervalRef.current) {
             clearInterval(autoRetryIntervalRef.current);
@@ -599,7 +611,7 @@ export function MonitoringProvider({ children }: { children: ReactNode }) {
     setConnectionFailed(false);
     healthCheckDoneRef.current = true;
     await fetchAll();
-  }, [activeCluster, fetchAll, markClusterUnreachable]);
+  }, [activeClusterConnectionKey, fetchAll, markClusterUnreachable]);
   
   // Initial load
   useEffect(() => {
@@ -608,7 +620,8 @@ export function MonitoringProvider({ children }: { children: ReactNode }) {
     }
     
     const timer = setTimeout(async () => {
-      if (!activeCluster) {
+      const cluster = activeClusterRef.current;
+      if (!cluster) {
         setError(null);
         setConnectionFailed(false);
         return;
@@ -618,17 +631,18 @@ export function MonitoringProvider({ children }: { children: ReactNode }) {
       
       setLoading(true);
       setError(null);
-      const healthResult = await checkClusterHealth(activeCluster);
+      const healthResult = await checkClusterHealth(cluster);
       
       if (!healthResult.success) {
         const baseMsg = healthResult.error || 'Network error, cannot access your cluster.';
-        const uri = (healthResult.clusterUri ?? activeCluster.baseUrl).replace(/\/$/, '');
-        markClusterUnreachable(activeCluster, `${baseMsg} Cluster uri: ${uri}`);
+        const uri = (healthResult.clusterUri ?? cluster.baseUrl).replace(/\/$/, '');
+        markClusterUnreachable(cluster, `${baseMsg} Cluster uri: ${uri}`);
         setLoading(false);
 
         if (!autoRetryIntervalRef.current) {
           autoRetryIntervalRef.current = setInterval(async () => {
-            if (!activeCluster) {
+            const retryCluster = activeClusterRef.current;
+            if (!retryCluster) {
               if (autoRetryIntervalRef.current) {
                 clearInterval(autoRetryIntervalRef.current);
                 autoRetryIntervalRef.current = null;
@@ -636,7 +650,7 @@ export function MonitoringProvider({ children }: { children: ReactNode }) {
               return;
             }
             
-            const autoHealthResult = await checkClusterHealth(activeCluster);
+            const autoHealthResult = await checkClusterHealth(retryCluster);
             if (autoHealthResult.success) {
               if (autoRetryIntervalRef.current) {
                 clearInterval(autoRetryIntervalRef.current);
@@ -657,8 +671,7 @@ export function MonitoringProvider({ children }: { children: ReactNode }) {
     }, 100);
     
     return () => clearTimeout(timer);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeCluster]);
+  }, [activeClusterConnectionKey, fetchAll, markClusterUnreachable]);
   
   // Auto-refresh when cluster changes
   const prevActiveClusterLabelRef = useRef<string | null>(null);
@@ -720,7 +733,7 @@ export function MonitoringProvider({ children }: { children: ReactNode }) {
       // Fetch new cluster data (fetchAlerts runs from its own effect with delay)
       fetchAll();
     }
-  }, [activeClusterLabel, activeCluster, fetchAll, abortInflightRequests]);
+  }, [activeClusterLabel, fetchAll, abortInflightRequests]);
 
   // Abort orphan requests when cluster becomes unreachable (race safety)
   useEffect(() => {
@@ -733,31 +746,31 @@ export function MonitoringProvider({ children }: { children: ReactNode }) {
   const alertIntervalMs = apiConfig.alertIntervalMs ?? 60000;
   const ALERT_INITIAL_DELAY_MS = 2000;
   useEffect(() => {
-    if (connectionFailed || connectionLost || !activeCluster) return;
+    if (connectionFailed || connectionLost || !activeClusterConnectionKey) return;
     const delayId = setTimeout(() => fetchAlerts(), ALERT_INITIAL_DELAY_MS);
     const intervalId = setInterval(fetchAlerts, alertIntervalMs);
     return () => {
       clearTimeout(delayId);
       clearInterval(intervalId);
     };
-  }, [fetchAlerts, connectionFailed, connectionLost, activeCluster, alertIntervalMs]);
+  }, [fetchAlerts, connectionFailed, connectionLost, activeClusterConnectionKey, alertIntervalMs]);
 
   // Polling: runs only when Indexing & Search tab is active (App controls via setPollingEnabled)
   useEffect(() => {
-    if (connectionFailed || connectionLost || !activeCluster || pollInterval === 0 || !pollingEnabled) {
+    if (connectionFailed || connectionLost || !activeClusterConnectionKey || pollInterval === 0 || !pollingEnabled) {
       return;
     }
     const interval = setInterval(() => {
       fetchAll();
     }, pollInterval);
     return () => clearInterval(interval);
-  }, [fetchAll, pollInterval, connectionFailed, connectionLost, activeCluster, pollingEnabled]);
+  }, [fetchAll, pollInterval, connectionFailed, connectionLost, activeClusterConnectionKey, pollingEnabled]);
 
   // Background health check every 30s (ElasticVue-style): if it fails, show "Network error..."; when it succeeds again, refresh data
   const healthCheckIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const connectionWasLostRef = useRef(false);
   useEffect(() => {
-    if (!activeCluster) {
+    if (!activeClusterConnectionKey) {
       connectionWasLostRef.current = false;
       if (healthCheckIntervalRef.current) {
         clearInterval(healthCheckIntervalRef.current);
@@ -767,12 +780,14 @@ export function MonitoringProvider({ children }: { children: ReactNode }) {
     }
     const intervalMs = apiConfig.healthCheckIntervalMs ?? 30000;
     healthCheckIntervalRef.current = setInterval(async () => {
-      const result = await checkClusterHealth(activeCluster);
+      const cluster = activeClusterRef.current;
+      if (!cluster) return;
+      const result = await checkClusterHealth(cluster);
       if (!result.success) {
         connectionWasLostRef.current = true;
         const baseMsg = result.error || 'Network error, cannot access your cluster.';
-        const uri = (result.clusterUri ?? activeCluster.baseUrl).replace(/\/$/, '');
-        markClusterUnreachable(activeCluster, `${baseMsg} Cluster uri: ${uri}`);
+        const uri = (result.clusterUri ?? cluster.baseUrl).replace(/\/$/, '');
+        markClusterUnreachable(cluster, `${baseMsg} Cluster uri: ${uri}`);
       } else {
         const health = result.health;
         if (health) {
@@ -807,11 +822,11 @@ export function MonitoringProvider({ children }: { children: ReactNode }) {
         healthCheckIntervalRef.current = null;
       }
     };
-  }, [activeCluster, fetchAll, markClusterUnreachable]);
+  }, [activeClusterConnectionKey, fetchAll, markClusterUnreachable]);
 
   // Auto-retry when back online or when user returns to the tab (e.g. after laptop sleep / network change)
   useEffect(() => {
-    if (!activeCluster) {
+    if (!activeClusterConnectionKey) {
       return;
     }
 
@@ -835,7 +850,7 @@ export function MonitoringProvider({ children }: { children: ReactNode }) {
       window.removeEventListener('online', handleOnline);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
-  }, [activeCluster, connectionFailed, error, retryConnection]);
+  }, [activeClusterConnectionKey, connectionFailed, error, retryConnection]);
 
   // Cleanup
   useEffect(() => {
@@ -846,7 +861,7 @@ export function MonitoringProvider({ children }: { children: ReactNode }) {
       }
       abortInflightRequests();
     };
-  }, [activeCluster, abortInflightRequests]);
+  }, [activeClusterConnectionKey, abortInflightRequests]);
   
   const addCluster = useCallback(async (input: CreateClusterInput) => {
     try {
@@ -960,15 +975,19 @@ export function MonitoringProvider({ children }: { children: ReactNode }) {
   }, [activeClusterLabel]);
 
   const updateClusterUuid = useCallback((clusterLabel: string, cluster_uuid: string) => {
-    setClusters((prev) =>
-      prev.map((c) => (c.label === clusterLabel ? { ...c, cluster_uuid } : c))
-    );
+    setClusters((prev) => {
+      const existing = prev.find((c) => c.label === clusterLabel);
+      if (!existing || existing.cluster_uuid === cluster_uuid) return prev;
+      return prev.map((c) => (c.label === clusterLabel ? { ...c, cluster_uuid } : c));
+    });
   }, []);
 
   const updateClusterName = useCallback((clusterLabel: string, cluster_name: string) => {
-    setClusters((prev) =>
-      prev.map((c) => (c.label === clusterLabel ? { ...c, cluster_name } : c))
-    );
+    setClusters((prev) => {
+      const existing = prev.find((c) => c.label === clusterLabel);
+      if (!existing || existing.cluster_name === cluster_name) return prev;
+      return prev.map((c) => (c.label === clusterLabel ? { ...c, cluster_name } : c));
+    });
   }, []);
 
   const deleteCluster = useCallback(
@@ -1025,7 +1044,10 @@ export function MonitoringProvider({ children }: { children: ReactNode }) {
       statusSummary,
       clusters,
       activeCluster,
+      activeClusterConnectionKey,
       setActiveCluster: (clusterLabel: string) => {
+        if (clusterLabel === activeClusterLabel) return;
+
         abortInflightRequests();
 
         // Clear auto retry if running
@@ -1107,6 +1129,8 @@ export function MonitoringProvider({ children }: { children: ReactNode }) {
     pollInterval,
     clusters,
     activeCluster,
+    activeClusterConnectionKey,
+    activeClusterLabel,
     addCluster,
     importClusters,
     updateCluster,

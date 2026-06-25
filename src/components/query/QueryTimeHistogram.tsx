@@ -10,8 +10,9 @@ import {
   XAxis,
   YAxis
 } from 'recharts';
-import { ChevronDown, ChevronUp, Loader2, X } from 'lucide-react';
+import { ChevronDown, ChevronUp, Loader2, X, ArrowRight } from 'lucide-react';
 import {
+  buildNoTimestampChartDataMessage,
   brushSelectionToTimeRange,
   computeHistogramBarSizePx,
   formatHistogramFooterLabel,
@@ -23,6 +24,7 @@ import {
   resolveHistogramXDomain,
   resolveSelectedBucketKeys,
   TIME_RANGE_PRESETS,
+  isAllTimePreset,
   type HistogramBucket,
   type TimeRangeFilter,
   type TimeRangePreset,
@@ -47,6 +49,11 @@ type QueryTimeHistogramProps = {
   error: string | null;
   onBrushApply: (range: TimeRangeFilter) => void;
   onBrushClear: () => void;
+  emptyTimeFieldWarning?: string | null;
+  /** True when hits, total, or histogram buckets indicate data in the active range. */
+  rangeHasData?: boolean;
+  /** Chart open probe in progress — keep chart area in loading state between preset steps. */
+  probeActive?: boolean;
 };
 
 const CHART_HEIGHT = 140;
@@ -168,7 +175,10 @@ export const QueryTimeHistogram = memo(function QueryTimeHistogram({
   fieldsLoading,
   error,
   onBrushApply,
-  onBrushClear
+  onBrushClear,
+  emptyTimeFieldWarning = null,
+  rangeHasData = false,
+  probeActive = false
 }: QueryTimeHistogramProps) {
   const [refAreaLeft, setRefAreaLeft] = useState<number | null>(null);
   const [refAreaRight, setRefAreaRight] = useState<number | null>(null);
@@ -186,7 +196,12 @@ export const QueryTimeHistogram = memo(function QueryTimeHistogram({
     return () => ro.disconnect();
   }, [collapsed]);
 
-  const chartBusy = loading || boundsLoading || fieldsLoading;
+  const chartBusy = loading || boundsLoading || fieldsLoading || probeActive;
+  const showFullChartSearching =
+    !collapsed &&
+    (loading || boundsLoading || probeActive) &&
+    !error &&
+    !Boolean(emptyTimeFieldWarning);
 
   // Complete, evenly-spaced series across the window so bars fill the full width.
   const filledBuckets = useMemo(
@@ -198,6 +213,24 @@ export const QueryTimeHistogram = memo(function QueryTimeHistogram({
     () => filledBuckets.map((b) => ({ ...b, keyLabel: b.label || String(b.key) })),
     [filledBuckets]
   );
+
+  const noChartData =
+    !rangeHasData &&
+    !chartBusy &&
+    !error &&
+    Boolean(selectedTimeField) &&
+    !showFullChartSearching;
+  const displayWarning =
+    emptyTimeFieldWarning ??
+    (noChartData ? buildNoTimestampChartDataMessage(selectedTimeField, timePreset) : null);
+  const showEmptyFieldWarning = Boolean(displayWarning);
+
+  const showEmptyChartState =
+    !rangeHasData &&
+    chartData.length === 0 &&
+    !chartBusy &&
+    !showEmptyFieldWarning &&
+    !(isAllTimePreset(timePreset) && (boundsLoading || loading));
 
   const chartSpanMs = useMemo(
     () => resolveHistogramChartSpanMs(activeRange, filledBuckets, timeFieldBounds),
@@ -296,11 +329,7 @@ export const QueryTimeHistogram = memo(function QueryTimeHistogram({
           Time chart
         </button>
 
-        {collapsed ? (
-          <span className="text-[11px] text-gray-500 dark:text-gray-400">
-            Collapsed — expand for time chart (starts at 15m)
-          </span>
-        ) : (
+        {!collapsed && !showFullChartSearching && (
           <>
             <div className="flex flex-wrap items-center gap-1">
               {TIME_RANGE_PRESETS.map((preset) => (
@@ -335,50 +364,68 @@ export const QueryTimeHistogram = memo(function QueryTimeHistogram({
                     <X className="h-3 w-3" />
                   </button>
                 </span>
-              ) : (
-                <span
-                  className="hidden text-[11px] text-gray-500 dark:text-gray-400 sm:inline"
-                  title={formatTimeRangeLabel(activeRange, timePreset, timeFieldBounds)}
-                >
-                  {formatTimeRangeLabel(activeRange, timePreset, timeFieldBounds)}
-                </span>
-              )}
-              {dateFields.length > 1 ? (
-                <select
-                  value={selectedTimeField}
-                  onChange={(e) => onTimeFieldChange(e.target.value)}
-                  className="max-w-[180px] rounded border border-gray-200 bg-white px-2 py-0.5 text-[11px] text-gray-800 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100"
-                  aria-label="Time field"
-                >
-                  {dateFields.map((field) => (
-                    <option key={field} value={field}>
-                      {field}
-                    </option>
-                  ))}
-                </select>
-              ) : (
-                <span className="text-[11px] text-gray-500 dark:text-gray-400">{selectedTimeField}</span>
-              )}
-              {(loading || fieldsLoading) && <Loader2 className="h-3.5 w-3.5 animate-spin text-gray-400" />}
+              ) : null}
+              {dateFields.length > 0 ? (
+                <>
+                  <span className="inline-flex items-center gap-1 text-[11px] text-gray-500 dark:text-gray-400">
+                    <span>Time field</span>
+                    <ArrowRight className="h-3 w-3 shrink-0" aria-hidden />
+                  </span>
+                  <select
+                    id="query-time-field-select"
+                    value={selectedTimeField}
+                    onChange={(e) => onTimeFieldChange(e.target.value)}
+                    className="max-w-[200px] rounded border border-gray-200 bg-white px-2 py-0.5 text-[11px] text-gray-800 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100"
+                    aria-label="Time field"
+                  >
+                    {dateFields.map((field) => (
+                      <option key={field} value={field}>
+                        {field}
+                      </option>
+                    ))}
+                  </select>
+                </>
+              ) : null}
             </div>
           </>
         )}
       </div>
 
-      {!collapsed && (
+      {!collapsed && showFullChartSearching ? (
+        <div
+          className="flex flex-col items-center justify-center gap-3 px-4 py-10"
+          style={{ minHeight: CHART_HEIGHT + 56 }}
+          role="status"
+          aria-live="polite"
+          aria-busy="true"
+        >
+          <Loader2 className="h-10 w-10 animate-spin text-blue-500 dark:text-blue-400" />
+          <p className="text-base font-medium text-gray-600 dark:text-gray-300">Searching…</p>
+        </div>
+      ) : !collapsed ? (
         <div className="overflow-visible px-2 pb-2 pt-2">
           {error ? (
             <div className="flex h-24 items-center justify-center text-xs text-amber-700 dark:text-amber-300">
               {error}
             </div>
-          ) : chartData.length === 0 && !chartBusy ? (
-            <div className="flex h-24 items-center justify-center text-xs text-gray-500 dark:text-gray-400">
-              No time data for the selected range.
-            </div>
-          ) : chartData.length === 0 && chartBusy ? (
+          ) : chartData.length === 0 && chartBusy && !showFullChartSearching ? (
             <div className="flex h-24 items-center justify-center gap-2 text-xs text-gray-500 dark:text-gray-400">
               <Loader2 className="h-4 w-4 animate-spin" />
               Loading time range…
+            </div>
+          ) : showEmptyFieldWarning ? (
+            <div
+              className="flex items-center justify-center px-6 py-8 text-center"
+              style={{ minHeight: CHART_HEIGHT }}
+              role="status"
+            >
+              <p className="max-w-xl whitespace-pre-line text-base font-medium leading-relaxed text-gray-600 dark:text-gray-300 sm:text-lg">
+                {displayWarning}
+              </p>
+            </div>
+          ) : showEmptyChartState ? (
+            <div className="flex h-24 items-center justify-center text-xs text-gray-500 dark:text-gray-400">
+              No time data for the selected range.
             </div>
           ) : (
             <div
@@ -449,16 +496,18 @@ export const QueryTimeHistogram = memo(function QueryTimeHistogram({
               </ResponsiveContainer>
             </div>
           )}
-          <div className="mt-2 space-y-1">
-            <p className="text-center text-[10px] tabular-nums text-gray-500 dark:text-gray-400">
-              {histogramFooter}
-            </p>
-            <p className="text-[10px] text-gray-400 dark:text-gray-500">
-              Click a bar or drag on the chart to filter by time range.
-            </p>
-          </div>
+          {!showEmptyFieldWarning && !error ? (
+            <div className="mt-2 space-y-1">
+              <p className="text-center text-[10px] tabular-nums text-gray-500 dark:text-gray-400">
+                {histogramFooter}
+              </p>
+              <p className="text-[10px] text-gray-400 dark:text-gray-500">
+                Click a bar or drag on the chart to filter by time range.
+              </p>
+            </div>
+          ) : null}
         </div>
-      )}
+      ) : null}
     </div>
   );
 });

@@ -218,7 +218,7 @@ export function ShardsTabContent({
   onOpenIndexDetails?: (indexName: string) => void;
   onOpenNodeDetails?: (nodeName: string) => void;
 } = {}) {
-  const { activeCluster, isClusterUnreachable } = useMonitoring();
+  const { activeCluster, activeClusterConnectionKey, isClusterUnreachable } = useMonitoring();
 
   const [, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -487,7 +487,7 @@ export function ShardsTabContent({
       // Ignore stats errors; placement view still works
       void e;
     }
-  }, [activeCluster, isClusterUnreachable]);
+  }, [activeClusterConnectionKey, isClusterUnreachable]);
 
   const fetchAll = useCallback(async (signal?: AbortSignal | null, opts?: { resetFrozenIndexOrder?: boolean }) => {
     if (!activeCluster || isClusterUnreachable) return;
@@ -547,7 +547,7 @@ export function ShardsTabContent({
       setLoading(false);
       onRefreshStateChange?.(false);
     }
-  }, [activeCluster, isClusterUnreachable, onRefreshStateChange]);
+  }, [activeClusterConnectionKey, isClusterUnreachable, onRefreshStateChange]);
 
   // Initial fetch on mount/cluster change
   useEffect(() => {

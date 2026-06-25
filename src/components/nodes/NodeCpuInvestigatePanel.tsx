@@ -17,6 +17,7 @@ import type { ClusterConnection } from '@/types/app';
 import type { HotThreadPoolShare, HotThreadStackFamily, ThreadPoolPoolMetric } from '@/types/diagnosis';
 import { ProgressBar } from '@/components/ui/ProgressBar';
 import { openActiveSearchesInNewTab } from '@/utils/extensionNavigation';
+import { getClusterConnectionKey } from '@/utils/clusterConnectionKey';
 import {
   buildCpuWorkloadConclusion,
   buildNodeThreadPoolMetrics,
@@ -148,6 +149,7 @@ export function NodeCpuInvestigatePanel({
   const [cpuHistory, setCpuHistory] = useState<CpuSnapshot[]>([]);
   const cpuPercentRef = useRef(cpuPercent);
   cpuPercentRef.current = cpuPercent;
+  const clusterConnectionKey = getClusterConnectionKey(activeCluster);
 
   const runInvestigate = useCallback(async () => {
     if (!activeCluster || isClusterUnreachable || !nodeId) return;
@@ -201,7 +203,7 @@ export function NodeCpuInvestigatePanel({
     } finally {
       setLoading(false);
     }
-  }, [activeCluster, isClusterUnreachable, nodeId, nodeName]);
+  }, [clusterConnectionKey, isClusterUnreachable, nodeId, nodeName]);
 
   useEffect(() => {
     setResult(null);
@@ -213,7 +215,7 @@ export function NodeCpuInvestigatePanel({
   useEffect(() => {
     if (!nodeId || !activeCluster || isClusterUnreachable) return;
     void runInvestigate();
-  }, [nodeId, activeCluster?.baseUrl, isClusterUnreachable, runInvestigate]);
+  }, [nodeId, clusterConnectionKey, isClusterUnreachable, runInvestigate]);
 
   const throttleHint =
     result != null && Date.now() - result.ranAt < THROTTLE_MS

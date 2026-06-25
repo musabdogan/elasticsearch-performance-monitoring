@@ -1,4 +1,5 @@
 import type { QueryMode, SortRule } from '@/utils/querySearch';
+import type { DiscoverFilter } from '@/types/discover';
 
 const STORAGE_PREFIX = 'es-monitor-query:';
 
@@ -10,6 +11,7 @@ export type QueryPersistedState = {
   size: number;
   from: number;
   sort: SortRule[];
+  discoverFilters?: DiscoverFilter[];
 };
 
 function storageKey(clusterLabel: string): string {

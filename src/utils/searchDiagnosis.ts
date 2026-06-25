@@ -128,6 +128,26 @@ function extractShardIndicesFromChildren(
   return [...indices];
 }
 
+/** Max names shown inline before "+ N more" (matches Nodes → Attributes). */
+export const TASK_NAME_LIST_VISIBLE = 3;
+
+export function parseCommaSeparatedIndexNames(value: string): string[] {
+  if (!value || value === '—') return [];
+  return [...new Set(value.split(',').map((s) => s.trim()).filter(Boolean))];
+}
+
+/** Concrete shard indices when present; otherwise names from the parent indices[…] clause. */
+export function getTaskShardIndexNames(task: ParsedSearchTask): string[] {
+  if (task.shardIndices.length > 0) return task.shardIndices;
+  const fromParent = parseCommaSeparatedIndexNames(task.index);
+  return fromParent.length > 0 ? fromParent : task.index === '—' ? [] : [task.index];
+}
+
+/** Alias / index pattern names from the parent task (indices[…]). */
+export function getTaskAliasNames(task: ParsedSearchTask): string[] {
+  return parseCommaSeparatedIndexNames(task.index);
+}
+
 export function indexMatchNames(concreteIndex: string, aliases: string[] = []): string[] {
   const names = new Set<string>();
   const add = (value: string) => {

@@ -33,7 +33,8 @@ export function IndexDataTab({ cluster, indexName, active, fieldUsageSummary }: 
     showIndexColumn,
     true,
     null,
-    autoColumns
+    autoColumns,
+    showIndexColumn
   );
 
   const handleAutoColumnsChange = useCallback(

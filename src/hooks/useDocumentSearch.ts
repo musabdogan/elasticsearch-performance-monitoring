@@ -29,6 +29,9 @@ import {
   type TimeRangeFilter,
   type TimeRangeResolution
 } from '@/utils/queryTimeHistogram';
+import { getClusterConnectionKey } from '@/utils/clusterConnectionKey';
+import { mergeDiscoverFiltersIntoBody } from '@/utils/discoverFilters';
+import type { DiscoverFilter } from '@/types/discover';
 
 export type TimeSearchContext = {
   timeField: string;
@@ -56,6 +59,7 @@ export function useDocumentSearch(
     getTimeRange?: () => TimeRangeFilter | null;
     getHistogramConfig?: () => HistogramSearchConfig | null;
     getTimeSearchContext?: () => TimeSearchContext | null;
+    getDiscoverFilters?: () => DiscoverFilter[];
     /** When sort is empty, use this for search requests (e.g. primary timestamp desc). */
     defaultSort?: SortRule[];
     /** Validates sort fields against the current index before each search. */
@@ -115,6 +119,8 @@ export function useDocumentSearch(
   modeRef.current = mode;
   defaultSortRef.current = options?.defaultSort ?? [];
 
+  const clusterConnectionKey = getClusterConnectionKey(cluster);
+
   const resolveEffectiveSort = useCallback((explicit?: SortRule[]): SortRule[] => {
     if (explicit !== undefined) return explicit;
     if (sortRef.current.length > 0) return sortRef.current;
@@ -141,7 +147,7 @@ export function useDocumentSearch(
 
   useEffect(() => {
     initialAutoRunClusterRef.current = null;
-  }, [cluster?.label, cluster?.baseUrl]);
+  }, [clusterConnectionKey]);
 
   const buildBody = useCallback(
     (
@@ -173,11 +179,19 @@ export function useDocumentSearch(
 
       if (!body) return { body: null, jsonError };
 
+      const discoverFilters = options?.getDiscoverFilters?.() ?? [];
+      if (discoverFilters.length > 0) {
+        body = mergeDiscoverFiltersIntoBody(body, discoverFilters);
+      }
+
       const timeContext = options?.getTimeSearchContext?.() ?? null;
 
       if (timeContext) {
         const { resolution, timeField, timeFieldFormat } = timeContext;
         if (resolution.mode === 'none') {
+          body = applyMatchNoneQuery(body);
+        } else if (resolution.mode === 'skip') {
+          // Expanded chart must never run an unfiltered query.
           body = applyMatchNoneQuery(body);
         } else if (resolution.mode === 'filter') {
           body = applyTimeRangeToSearchBody(body, resolution.range, nextMode, nextQuery, timeFieldFormat);
@@ -251,7 +265,7 @@ export function useDocumentSearch(
 
       return { body, jsonError };
     },
-    [indexPattern, options?.getTimeRange, options?.getHistogramConfig, options?.getTimeSearchContext]
+    [indexPattern, options?.getTimeRange, options?.getHistogramConfig, options?.getTimeSearchContext, options?.getDiscoverFilters]
   );
 
   const buildBaseSearchBody = useCallback(
@@ -417,7 +431,7 @@ export function useDocumentSearch(
         if (!controller.signal.aborted) setLoading(false);
       }
     },
-    [cluster, indexPattern, enabled, buildBody, resolveEffectiveSort, options?.sanitizeSort]
+    [clusterConnectionKey, indexPattern, enabled, buildBody, resolveEffectiveSort, options?.sanitizeSort]
   );
 
   const runSearchNowRef = useRef(runSearchNow);
@@ -457,7 +471,7 @@ export function useDocumentSearch(
     });
   }, [
     enabled,
-    cluster,
+    clusterConnectionKey,
     indexPattern,
     options?.autoRun,
     options?.simpleQuery,
@@ -504,6 +518,20 @@ export function useDocumentSearch(
     [runSearch]
   );
 
+  const buildContextSearchBody = useCallback((): Record<string, unknown> | null => {
+    const { body } = buildBody(
+      modeRef.current,
+      queryRef.current,
+      advancedBodyRef.current,
+      0,
+      0,
+      resolveEffectiveSort(),
+      true,
+      false
+    );
+    return body;
+  }, [buildBody, resolveEffectiveSort]);
+
   const effectiveHits = hitsIndexPattern === indexPattern ? hits : [];
 
   return {
@@ -533,6 +561,7 @@ export function useDocumentSearch(
     histogramBuckets,
     histogramError,
     buildBaseSearchBody,
+    buildContextSearchBody,
     search,
     goPrev,
     goNext,

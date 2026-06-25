@@ -2,10 +2,12 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { SearchHit } from '@/types/api';
 import type { FieldUsageSummary } from '@/utils/indexDetailHelpers';
 import {
+  buildDefaultColumnOrder,
   columnsEqual,
   getDefaultColumnsFromFieldUsage,
   insertColumn,
   isDisplayableSourceField,
+  isMetaDataField,
   mergeAvailableSourceFields,
   META_FIELD_ID,
   META_FIELD_INDEX,
@@ -14,15 +16,6 @@ import {
   resolveDefaultDataColumns,
   writeStoredColumns
 } from '@/utils/indexDataTable';
-
-function prependIndexIfNeeded(columns: string[]): string[] {
-  if (columns.includes(META_FIELD_INDEX)) return columns;
-  const idIndex = columns.indexOf(META_FIELD_ID);
-  if (idIndex === -1) return [META_FIELD_INDEX, ...columns];
-  const next = [...columns];
-  next.splice(idIndex + 1, 0, META_FIELD_INDEX);
-  return next;
-}
 
 export type FieldDragPayload = {
   field: string;
@@ -50,6 +43,19 @@ export function setFieldDragPayload(dataTransfer: DataTransfer, payload: FieldDr
   dataTransfer.effectAllowed = 'move';
 }
 
+function isStaleBootstrapColumns(
+  prev: string[],
+  next: string[],
+  primaryTimestampField?: string | null
+): boolean {
+  if (next.length <= prev.length) return false;
+  if (prev.length === 0) return true;
+  const prevSet = new Set(prev);
+  if (![...prevSet].every((field) => next.includes(field))) return false;
+  if (prev.length === 1 && primaryTimestampField && prev[0] === primaryTimestampField) return true;
+  return prev.length < next.length;
+}
+
 export function useDocumentColumns(
   scopeKey: string,
   hits: SearchHit[],
@@ -57,7 +63,9 @@ export function useDocumentColumns(
   includeIndexField = false,
   fieldMetadataReady = true,
   primaryTimestampField?: string | null,
-  autoColumns = true
+  autoColumns = true,
+  /** When false, _id/_index never appear in auto defaults (user can still add from sidebar). */
+  allowAutoMetaColumns = false
 ) {
   const availableFields = useMemo(
     () => mergeAvailableSourceFields(hits, fieldUsageSummary, includeIndexField),
@@ -68,19 +76,41 @@ export function useDocumentColumns(
     (cols: string[]) => cols.filter((col) => isDisplayableSourceField(col) || col === META_FIELD_ID || col === META_FIELD_INDEX),
     []
   );
+
+  const applyAutoColumnPolicy = useCallback(
+    (cols: string[]) => {
+      const sanitized = sanitizeColumns(cols);
+      if (!allowAutoMetaColumns) {
+        return sanitized.filter((col) => !isMetaDataField(col));
+      }
+      if (includeIndexField) {
+        const sourceCols = sanitized.filter((col) => !isMetaDataField(col));
+        return buildDefaultColumnOrder(sourceCols, primaryTimestampField, true);
+      }
+      return sanitized.filter((col) => !isMetaDataField(col));
+    },
+    [allowAutoMetaColumns, includeIndexField, primaryTimestampField, sanitizeColumns]
+  );
+
   const defaultsFromFieldUsage = useMemo(
     () => Boolean(getDefaultColumnsFromFieldUsage(fieldUsageSummary)?.length),
     [fieldUsageSummary]
   );
 
-  const defaultColumns = useMemo(() => {
-    const cols = resolveDefaultDataColumns(hits, fieldUsageSummary, undefined, primaryTimestampField);
-    return includeIndexField ? prependIndexIfNeeded(cols) : cols;
-  }, [hits, fieldUsageSummary, includeIndexField, primaryTimestampField]);
-  const pageDefaults = useMemo(() => {
-    const cols = resolveDefaultDataColumns(hits, undefined, undefined, primaryTimestampField);
-    return includeIndexField ? prependIndexIfNeeded(cols) : cols;
-  }, [hits, includeIndexField, primaryTimestampField]);
+  const defaultColumns = useMemo(
+    () =>
+      applyAutoColumnPolicy(
+        resolveDefaultDataColumns(hits, fieldUsageSummary, undefined, primaryTimestampField)
+      ),
+    [hits, fieldUsageSummary, primaryTimestampField, applyAutoColumnPolicy]
+  );
+  const pageDefaults = useMemo(
+    () =>
+      applyAutoColumnPolicy(
+        resolveDefaultDataColumns(hits, undefined, undefined, primaryTimestampField)
+      ),
+    [hits, primaryTimestampField, applyAutoColumnPolicy]
+  );
 
   const [selectedColumns, setSelectedColumns] = useState<string[]>([]);
   const [dropTargetIndex, setDropTargetIndex] = useState<number | null>(null);
@@ -103,58 +133,56 @@ export function useDocumentColumns(
     needsInitRef.current = false;
     const saved = readStoredColumns(scopeKey);
     if (saved?.length && (!autoColumns || (!userModifiedRef.current && !defaultsFromFieldUsage))) {
-      setSelectedColumns(sanitizeColumns(saved));
+      setSelectedColumns(applyAutoColumnPolicy(saved));
       return;
     }
 
-    setSelectedColumns(sanitizeColumns(defaultColumns));
+    setSelectedColumns(defaultColumns);
   }, [
     hits.length,
     scopeKey,
     defaultColumns,
     defaultsFromFieldUsage,
     autoColumns,
-    sanitizeColumns,
+    applyAutoColumnPolicy,
     fieldMetadataReady
   ]);
 
   useEffect(() => {
-    if (!autoColumns) return;
-    if (!fieldMetadataReady || userModifiedRef.current) return;
+    if (!autoColumns || !fieldMetadataReady || userModifiedRef.current) return;
 
-    if (defaultsFromFieldUsage) {
-      setSelectedColumns((prev) => {
-        const next = sanitizeColumns(defaultColumns);
-        if (prev.length === 0) return next;
-        if (columnsEqual(prev, next)) return prev;
-        if (columnsEqual(prev, pageDefaults) || columnsEqual(prev, sanitizeColumns(pageDefaults))) {
+    setSelectedColumns((prev) => {
+      const next = defaultColumns;
+      if (prev.length === 0) return next;
+      if (columnsEqual(prev, next)) return prev;
+
+      if (isStaleBootstrapColumns(prev, next, primaryTimestampField)) {
+        return next;
+      }
+
+      if (defaultsFromFieldUsage) {
+        const prevSansMeta = allowAutoMetaColumns ? prev : prev.filter((col) => !isMetaDataField(col));
+        if (columnsEqual(prevSansMeta, pageDefaults) || columnsEqual(prevSansMeta, sanitizeColumns(pageDefaults))) {
           return next;
         }
         return prev;
-      });
-      return;
-    }
-
-    if (!fieldUsageSummary?.fieldList?.length) return;
-
-    setSelectedColumns((prev) => {
-      if (prev.length === 0) return sanitizeColumns(defaultColumns);
-      if (columnsEqual(prev, pageDefaults) && !columnsEqual(defaultColumns, pageDefaults)) {
-        return sanitizeColumns(defaultColumns);
       }
-      if (columnsEqual(prev, sanitizeColumns(pageDefaults))) {
-        return sanitizeColumns(defaultColumns);
+
+      const prevSansMeta = allowAutoMetaColumns ? prev : prev.filter((col) => !isMetaDataField(col));
+      if (columnsEqual(prevSansMeta, sanitizeColumns(pageDefaults))) {
+        return next;
       }
+
       return prev;
     });
   }, [
-    fieldUsageSummary,
     defaultColumns,
     pageDefaults,
     defaultsFromFieldUsage,
     autoColumns,
-    scopeKey,
     fieldMetadataReady,
+    primaryTimestampField,
+    allowAutoMetaColumns,
     sanitizeColumns
   ]);
 
@@ -238,8 +266,8 @@ export function useDocumentColumns(
   const resetToDefault = useCallback(() => {
     userModifiedRef.current = false;
     needsInitRef.current = false;
-    setSelectedColumns(sanitizeColumns(defaultColumns));
-  }, [defaultColumns, sanitizeColumns]);
+    setSelectedColumns(defaultColumns);
+  }, [defaultColumns]);
 
   return {
     availableFields,

@@ -295,6 +295,7 @@ export function NodesTabContent({
 }: NodesTabContentProps = {}) {
   const {
     activeCluster,
+    activeClusterConnectionKey,
     catNodesExtended,
     nodeAttrsByNodeId,
     snapshot,
@@ -479,7 +480,7 @@ export function NodesTabContent({
       })
       .finally(() => setSelectedNodeShardsLoading(false));
     return () => controller.abort();
-  }, [activeCluster, selectedNodeName]);
+  }, [activeClusterConnectionKey, selectedNodeName]);
 
   useEffect(() => {
     if (!selectedNodeName) return;
@@ -495,7 +496,7 @@ export function NodesTabContent({
     if (activeCluster) {
       refreshNodes();
     }
-  }, [activeCluster, modalOnly, isClusterUnreachable, refreshNodes]);
+  }, [activeClusterConnectionKey, modalOnly, isClusterUnreachable, refreshNodes]);
 
   const allocationAbortRef = useRef<AbortController | null>(null);
 
@@ -515,7 +516,7 @@ export function NodesTabContent({
     } catch {
       if (!controller.signal.aborted) setCatAllocationRows([]);
     }
-  }, [activeCluster, modalOnly, isClusterUnreachable]);
+  }, [activeClusterConnectionKey, modalOnly, isClusterUnreachable]);
 
   useEffect(() => {
     void loadCatAllocation();
@@ -536,7 +537,7 @@ export function NodesTabContent({
     };
     window.addEventListener('refreshNodes', onRefreshNodes);
     return () => window.removeEventListener('refreshNodes', onRefreshNodes);
-  }, [activeCluster, modalOnly, isClusterUnreachable, refreshNodes, loadCatAllocation, onRefreshStateChange]);
+  }, [activeClusterConnectionKey, modalOnly, isClusterUnreachable, refreshNodes, loadCatAllocation, onRefreshStateChange]);
 
   const selectedNodeRow = useMemo(() => {
     if (!selectedNodeName) return null;

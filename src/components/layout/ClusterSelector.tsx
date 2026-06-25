@@ -711,7 +711,9 @@ export function ClusterSelector() {
                                         <button
                                           type="button"
                                           onClick={() => {
-                                            setActiveCluster(cluster.label);
+                                            if (cluster.label !== activeCluster?.label) {
+                                              setActiveCluster(cluster.label);
+                                            }
                                             handleClose();
                                           }}
                                           className="text-left min-w-0 flex-1 overflow-hidden"

@@ -331,17 +331,8 @@ export default function App() {
     };
   }, [snapshot]);
 
-  const isRedStatus = snapshot?.health.status === 'red';
-  const isYellowStatus = snapshot?.health.status === 'yellow';
-
-  const statusBgClass = isRedStatus
-    ? 'bg-gradient-to-br from-red-50 via-rose-50 to-pink-50 dark:from-red-950 dark:via-rose-950 dark:to-pink-950'
-    : isYellowStatus
-      ? 'bg-gradient-to-br from-yellow-50 via-amber-50 to-yellow-100 dark:from-yellow-950 dark:via-amber-950 dark:to-yellow-900'
-      : '';
-
   return (
-    <main className={`w-full h-screen overflow-hidden flex flex-col bg-slate-50 dark:bg-slate-900 ${statusBgClass}`}>
+    <main className="w-full h-screen overflow-hidden flex flex-col bg-slate-50 dark:bg-slate-900">
       <GettingStartedTour />
       <PageHeader
         onRefresh={handleRefresh}

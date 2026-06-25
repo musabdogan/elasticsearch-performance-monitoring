@@ -8,6 +8,7 @@ import {
 } from '@/services/elasticsearch';
 import type { ClusterConnection } from '@/types/app';
 import type { ParsedSearchTask } from '@/types/diagnosis';
+import { getClusterConnectionKey } from '@/utils/clusterConnectionKey';
 import { DataTable } from '@/components/data/DataTable';
 import {
   describeActiveTaskIssue,
@@ -114,6 +115,7 @@ export function IndexDiagnosisPanel({
   const [cancelling, setCancelling] = useState(false);
   const [copied, setCopied] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
+  const clusterConnectionKey = getClusterConnectionKey(activeCluster);
 
   const activeTasks = useMemo(
     () => filterTasksByIndex(allTasks, indexName, indexAliases),
@@ -153,7 +155,7 @@ export function IndexDiagnosisPanel({
     } finally {
       setLoading(false);
     }
-  }, [activeCluster, isClusterUnreachable, indexName, indexAliases]);
+  }, [clusterConnectionKey, isClusterUnreachable, indexName, indexAliases]);
 
   useEffect(() => {
     if (!isActive || ranOnce) return;

@@ -751,7 +751,7 @@ function IndexExplorerSection({
       setLoading(false);
       onRefreshStateChange?.(false);
     }
-  }, [activeCluster, isClusterUnreachable, onRefreshStateChange, sectionExpanded]);
+  }, [clusterKey, isClusterUnreachable, onRefreshStateChange, sectionExpanded]);
 
   useEffect(() => {
     if (!activeCluster || isClusterUnreachable || !sectionExpanded) return;

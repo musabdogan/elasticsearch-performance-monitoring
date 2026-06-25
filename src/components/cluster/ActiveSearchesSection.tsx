@@ -8,15 +8,57 @@ import { DataTable } from '@/components/data/DataTable';
 import Pagination from '@/components/data/Pagination';
 import { InfoPopup } from '@/components/ui/InfoPopup';
 import { TabSectionExpandTrigger } from '@/components/ui/TabSectionExpandTrigger';
+import { TruncatedNameList } from '@/components/ui/TruncatedNameList';
 import { getNetworkErrorMessage } from '@/services/elasticsearch';
 import {
   getPatternLabel,
   extractSearchQueryPreview,
+  getTaskAliasNames,
+  getTaskShardIndexNames,
   parseTasksResponse,
   summarizeActiveSearches
 } from '@/utils/searchDiagnosis';
 import { RefreshCw, Search, X, Copy, Check } from 'lucide-react';
 import { matchesParsedTermsInAnyText, parseSearchTerms } from '@/utils/search';
+
+const ACTIVE_SEARCHES_TABLE_ID = 'active-searches';
+
+type SortDirection = 'asc' | 'desc' | null;
+
+function getActiveSearchSortValue(task: ParsedSearchTask, column: string): string | number {
+  switch (column) {
+    case 'queryPreview':
+      return extractSearchQueryPreview(task.queryJson, task.queryRaw) ?? '';
+    case 'shardIndices':
+      return getTaskShardIndexNames(task).join(', ');
+    case 'index':
+      return getTaskAliasNames(task).join(', ');
+    case 'runningSec':
+      return task.runningSec;
+    case 'pattern':
+      return getPatternLabel(task.pattern);
+    case 'childQueryCount':
+      return task.childQueryCount;
+    default:
+      return '';
+  }
+}
+
+function compareActiveSearchValues(
+  aVal: string | number,
+  bVal: string | number,
+  direction: Exclude<SortDirection, null>
+): number {
+  if (typeof aVal === 'number' && typeof bVal === 'number') {
+    return direction === 'asc' ? aVal - bVal : bVal - aVal;
+  }
+  const aStr = String(aVal).toLowerCase();
+  const bStr = String(bVal).toLowerCase();
+  if (direction === 'asc') {
+    return aStr < bStr ? -1 : aStr > bStr ? 1 : 0;
+  }
+  return aStr > bStr ? -1 : aStr < bStr ? 1 : 0;
+}
 
 function HeaderCount({ count }: { count: number }) {
   if (count === 0) return null;
@@ -52,7 +94,7 @@ export function ActiveSearchesSection({
   onDiagnosisNavConsumed,
   onOpenIndexDiagnosis
 }: ActiveSearchesSectionProps) {
-  const { activeCluster, isClusterUnreachable } = useMonitoring();
+  const { activeCluster, activeClusterConnectionKey, isClusterUnreachable } = useMonitoring();
   const [expanded, setExpanded] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -60,6 +102,30 @@ export function ActiveSearchesSection({
   const [searchText, setSearchText] = useState('');
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
+  const [sortColumn, setSortColumn] = useState<string | null>(() => {
+    try {
+      const stored = localStorage.getItem(`datatable-sort-${ACTIVE_SEARCHES_TABLE_ID}`);
+      if (stored) {
+        const parsed = JSON.parse(stored) as { column?: string; direction?: SortDirection };
+        if (parsed.column) return parsed.column;
+      }
+    } catch {
+      // ignore
+    }
+    return 'runningSec';
+  });
+  const [sortDirection, setSortDirection] = useState<SortDirection>(() => {
+    try {
+      const stored = localStorage.getItem(`datatable-sort-${ACTIVE_SEARCHES_TABLE_ID}`);
+      if (stored) {
+        const parsed = JSON.parse(stored) as { column?: string; direction?: SortDirection };
+        if (parsed.direction === 'asc' || parsed.direction === 'desc') return parsed.direction;
+      }
+    } catch {
+      // ignore
+    }
+    return 'desc';
+  });
   const [indexFilter, setIndexFilter] = useState('');
   const [infoOpen, setInfoOpen] = useState(false);
   const [selectedTask, setSelectedTask] = useState<ParsedSearchTask | null>(null);
@@ -81,7 +147,7 @@ export function ActiveSearchesSection({
     } finally {
       setLoading(false);
     }
-  }, [activeCluster, isClusterUnreachable]);
+  }, [activeClusterConnectionKey, isClusterUnreachable]);
 
   useEffect(() => {
     if (!diagnosisNav?.indicesSection || diagnosisNav.indicesSection !== 'activeSearches') return;
@@ -122,13 +188,25 @@ export function ActiveSearchesSection({
     let list = tasks;
     if (indexFilter.trim()) {
       const idx = indexFilter.trim().toLowerCase();
-      list = list.filter((t) => t.index.toLowerCase() === idx);
+      list = list.filter(
+        (t) =>
+          getTaskAliasNames(t).some((name) => name.toLowerCase() === idx) ||
+          getTaskShardIndexNames(t).some((name) => name.toLowerCase() === idx)
+      );
     }
     if (searchText.trim()) {
       const terms = parseSearchTerms(searchText);
       list = list.filter((t) =>
         matchesParsedTermsInAnyText(
-          [t.taskId, t.index, t.pattern, getPatternLabel(t.pattern), t.traceId ?? ''],
+          [
+            t.taskId,
+            t.index,
+            ...getTaskAliasNames(t),
+            ...getTaskShardIndexNames(t),
+            t.pattern,
+            getPatternLabel(t.pattern),
+            t.traceId ?? ''
+          ],
           terms
         )
       );
@@ -136,9 +214,45 @@ export function ActiveSearchesSection({
     return list;
   }, [tasks, indexFilter, searchText]);
 
-  const pageData = filtered.slice((page - 1) * pageSize, page * pageSize);
-  const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
+  const sortedFiltered = useMemo(() => {
+    const column = sortColumn ?? 'runningSec';
+    const direction: Exclude<SortDirection, null> = sortDirection ?? 'desc';
+    return [...filtered].sort((a, b) => {
+      const primary = compareActiveSearchValues(
+        getActiveSearchSortValue(a, column),
+        getActiveSearchSortValue(b, column),
+        direction
+      );
+      if (primary !== 0) return primary;
+      return compareActiveSearchValues(a.runningSec, b.runningSec, 'desc');
+    });
+  }, [filtered, sortColumn, sortDirection]);
+
+  const pageData = sortedFiltered.slice((page - 1) * pageSize, page * pageSize);
+  const totalPages = Math.max(1, Math.ceil(sortedFiltered.length / pageSize));
   const summary = useMemo(() => summarizeActiveSearches(filtered), [filtered]);
+
+  const handleSortChange = useCallback((column: string | null, direction: SortDirection) => {
+    if (!column || !direction) {
+      setSortColumn('runningSec');
+      setSortDirection('desc');
+    } else {
+      setSortColumn(column);
+      setSortDirection(direction);
+    }
+    setPage(1);
+    try {
+      localStorage.setItem(
+        `datatable-sort-${ACTIVE_SEARCHES_TABLE_ID}`,
+        JSON.stringify({
+          column: column ?? 'runningSec',
+          direction: direction ?? 'desc'
+        })
+      );
+    } catch {
+      // ignore
+    }
+  }, []);
 
   const queryDisplay = selectedTask?.queryJson
     ? JSON.stringify(selectedTask.queryJson, null, 2)
@@ -215,14 +329,17 @@ export function ActiveSearchesSection({
               <Pagination
                 currentPage={page}
                 totalPages={totalPages}
-                totalItems={filtered.length}
+                totalItems={sortedFiltered.length}
                 pageSize={pageSize}
                 onPageChange={setPage}
                 inline
               />
               <select
                 value={String(pageSize)}
-                onChange={(e) => setPageSize(parseInt(e.target.value, 10) || 10)}
+                onChange={(e) => {
+                  setPageSize(parseInt(e.target.value, 10) || 10);
+                  setPage(1);
+                }}
                 className="text-xs border border-gray-300 rounded-md bg-white dark:bg-gray-700 px-2 py-1"
               >
                 {[10, 20, 50].map((n) => (
@@ -252,40 +369,52 @@ export function ActiveSearchesSection({
             )}
             <div className="tab-section-scroll tab-section-scroll-flush">
               <DataTable
+                tableId={ACTIVE_SEARCHES_TABLE_ID}
                 data={pageData}
+                controlledSort={{
+                  sortColumn,
+                  sortDirection,
+                  onSortChange: handleSortChange
+                }}
                 columns={[
                   {
                     key: 'taskId',
                     header: 'Task ID',
                     sortable: false,
                     render: (r) => (
-                      <button
-                        type="button"
-                        className="font-mono text-xs text-blue-700 dark:text-blue-300 hover:underline text-left truncate max-w-[140px] block"
+                      <span
+                        className="font-mono text-xs text-gray-800 dark:text-gray-200 truncate max-w-[140px] block"
                         title={r.taskId}
-                        onClick={() => setSelectedTask(r)}
                       >
                         {r.taskId.split(':').pop() ?? r.taskId}
-                      </button>
+                      </span>
+                    )
+                  },
+                  {
+                    key: 'shardIndices',
+                    header: 'Index',
+                    sortable: true,
+                    render: (r) => (
+                      <TruncatedNameList
+                        names={getTaskShardIndexNames(r)}
+                        onNameClick={
+                          onOpenIndexDiagnosis
+                            ? (name) => onOpenIndexDiagnosis(name)
+                            : undefined
+                        }
+                      />
                     )
                   },
                   {
                     key: 'index',
-                    header: 'Index',
-                    render: (r) => (
-                      <button
-                        type="button"
-                        className="text-xs hover:underline text-left"
-                        onClick={() => onOpenIndexDiagnosis?.(r.index)}
-                        disabled={r.index === '—'}
-                      >
-                        {r.index}
-                      </button>
-                    )
+                    header: 'Alias',
+                    sortable: true,
+                    render: (r) => <TruncatedNameList names={getTaskAliasNames(r)} />
                   },
                   {
                     key: 'queryPreview',
-                    header: 'Query',
+                    header: 'Query value',
+                    sortable: true,
                     render: (r) => {
                       const preview = extractSearchQueryPreview(r.queryJson, r.queryRaw);
                       return (
@@ -300,7 +429,7 @@ export function ActiveSearchesSection({
                   },
                   {
                     key: 'runningSec',
-                    header: 'Runtime',
+                    header: 'Search latency',
                     sortable: true,
                     align: 'right',
                     render: (r) => (
@@ -310,6 +439,7 @@ export function ActiveSearchesSection({
                   {
                     key: 'pattern',
                     header: 'Pattern',
+                    sortable: true,
                     render: (r) => (
                       <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${patternBadgeClass(r.pattern)}`}>
                         {getPatternLabel(r.pattern)}
@@ -318,10 +448,27 @@ export function ActiveSearchesSection({
                   },
                   {
                     key: 'childQueryCount',
-                    header: 'Query shards',
-                    align: 'right',
+                    header: 'Shards',
+                    sortable: true,
+                    className: 'w-20 tabular-nums',
                     render: (r) => (
                       <span className="font-mono tab-content-value">{r.childQueryCount || '—'}</span>
+                    )
+                  },
+                  {
+                    key: 'viewQuery',
+                    header: '',
+                    sortable: false,
+                    align: 'right',
+                    className: 'w-24 whitespace-nowrap pl-2',
+                    render: (r) => (
+                      <button
+                        type="button"
+                        className="text-xs text-blue-600 hover:underline dark:text-blue-400 whitespace-nowrap"
+                        onClick={() => setSelectedTask(r)}
+                      >
+                        View query
+                      </button>
                     )
                   }
                 ]}
@@ -374,7 +521,7 @@ export function ActiveSearchesSection({
                   </div>
                 </div>
                 <div>
-                  <span className="text-gray-500">Query shards</span>
+                  <span className="text-gray-500">Shards</span>
                   <div className="font-mono">{selectedTask.childQueryCount}</div>
                 </div>
                 {selectedTask.traceId && (

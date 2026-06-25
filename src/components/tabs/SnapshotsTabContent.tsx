@@ -412,7 +412,7 @@ export function SnapshotsTabContent(
     isIndexDetailModalOpen?: boolean;
   } = {}
 ) {
-  const { activeCluster, isClusterUnreachable } = useMonitoring();
+  const { activeCluster, activeClusterConnectionKey, isClusterUnreachable } = useMonitoring();
   const activeClusterRef = useRef(activeCluster);
   activeClusterRef.current = activeCluster;
   /** Stable key so effects/callbacks run only when cluster actually changes */
@@ -734,7 +734,7 @@ export function SnapshotsTabContent(
     };
     window.addEventListener('refreshSnapshots', onRefreshSnapshots);
     return () => window.removeEventListener('refreshSnapshots', onRefreshSnapshots);
-  }, [activeCluster, isClusterUnreachable, fetchSnapshots, onRefreshStateChange]);
+  }, [activeClusterConnectionKey, isClusterUnreachable, fetchSnapshots, onRefreshStateChange]);
 
   const getInitialSortState = useCallback((): { column: string; direction: SortDirection } => {
     try {

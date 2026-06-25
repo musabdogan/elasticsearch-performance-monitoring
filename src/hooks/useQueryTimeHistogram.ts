@@ -64,7 +64,10 @@ export function useQueryTimeHistogramState({
       const fields = indexDetails ? mergeDateFieldsFromMappingsResponse(indexDetails) : [];
       if (fields.length > 0) {
         setDateFields(fields);
-        setSelectedTimeField(pickDefaultTimeField(fields) ?? fields[0]);
+        setSelectedTimeField((prev) => {
+          if (prev && fields.includes(prev)) return prev;
+          return pickDefaultTimeField(fields) ?? fields[0];
+        });
       } else {
         setDateFields([]);
         setSelectedTimeField('');
@@ -83,7 +86,10 @@ export function useQueryTimeHistogramState({
       return;
     }
     setDateFields(fields);
-    setSelectedTimeField(pickDefaultTimeField(fields) ?? fields[0]);
+    setSelectedTimeField((prev) => {
+      if (prev && fields.includes(prev)) return prev;
+      return pickDefaultTimeField(fields) ?? fields[0];
+    });
   }, [visible, indexDetails, indexDetailsLoading, indexPattern]);
 
   const hasMappingDateField = dateFields.length > 0 && Boolean(selectedTimeField);

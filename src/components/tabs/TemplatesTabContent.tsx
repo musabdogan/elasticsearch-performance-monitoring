@@ -95,7 +95,7 @@ function legacyToList(data: LegacyTemplateListResponse): LegacyTemplateRow[] {
 }
 
 export function TemplatesTabContent({ onRefreshStateChange }: { onRefreshStateChange?: (loading: boolean) => void } = {}) {
-  const { activeCluster, isClusterUnreachable } = useMonitoring();
+  const { activeCluster, activeClusterConnectionKey, isClusterUnreachable } = useMonitoring();
   const activeClusterRef = useRef(activeCluster);
   activeClusterRef.current = activeCluster;
   const clusterKey = activeCluster ? `${activeCluster.label ?? ''}-${activeCluster.baseUrl}` : '';
@@ -246,7 +246,7 @@ export function TemplatesTabContent({ onRefreshStateChange }: { onRefreshStateCh
     };
     window.addEventListener('refreshTemplates', onRefresh);
     return () => window.removeEventListener('refreshTemplates', onRefresh);
-  }, [activeCluster, isClusterUnreachable, fetchTemplates, onRefreshStateChange]);
+  }, [activeClusterConnectionKey, isClusterUnreachable, fetchTemplates, onRefreshStateChange]);
 
   useEffect(() => {
     if (!selectedTemplate) return;

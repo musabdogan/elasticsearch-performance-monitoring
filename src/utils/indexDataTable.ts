@@ -42,7 +42,7 @@ function sortFieldsByFrequency(counts: Map<string, number>): string[] {
     .map(([key]) => key);
 }
 
-function sortFieldNames(fields: string[]): string[] {
+export function sortFieldNames(fields: string[]): string[] {
   return [...fields].sort((a, b) =>
     a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' })
   );
@@ -67,14 +67,61 @@ export function isDisplayableSourceField(field: string): boolean {
   return !isKeywordSubfield(field);
 }
 
+/** Read dotted mapping paths from nested _source (e.g. currentStop.arrivalEstimate). */
+export function getSourceValueByPath(source: Record<string, unknown>, path: string): unknown {
+  if (Object.prototype.hasOwnProperty.call(source, path)) {
+    return source[path];
+  }
+  if (!path.includes('.')) {
+    return source[path];
+  }
+
+  let current: unknown = source;
+  for (const part of path.split('.')) {
+    if (current == null || typeof current !== 'object' || Array.isArray(current)) {
+      current = undefined;
+      break;
+    }
+    current = (current as Record<string, unknown>)[part];
+  }
+  if (current !== undefined) return current;
+
+  return getSourceValueByFlatten(source, path);
+}
+
+function getSourceValueByFlatten(
+  source: Record<string, unknown>,
+  targetPath: string
+): unknown | undefined {
+  let found: unknown | undefined;
+
+  const walk = (value: unknown, prefix: string): void => {
+    if (found !== undefined) return;
+    if (prefix === targetPath) {
+      found = value;
+      return;
+    }
+    if (value == null || typeof value !== 'object' || Array.isArray(value)) return;
+    for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
+      walk(child, prefix ? `${prefix}.${key}` : key);
+    }
+  };
+
+  for (const [key, value] of Object.entries(source)) {
+    walk(value, key);
+  }
+
+  return found;
+}
+
 export function getHitColumnValue(hit: SearchHit, field: string, indexName: string, maxLen?: number): string {
   if (field === META_FIELD_ID) return hit._id ?? '';
   if (field === META_FIELD_INDEX) return hit._index ?? indexName;
   const source = (hit._source ?? {}) as Record<string, unknown>;
-  return formatSourceCellValue(source[field], maxLen) || '';
+  return formatSourceCellValue(getSourceValueByPath(source, field), maxLen) || '';
 }
 
-function buildDefaultColumnOrder(
+export function buildDefaultColumnOrder(
   fields: string[],
   primaryTimestampField?: string | null,
   includeIndex = false
@@ -113,7 +160,7 @@ export function getDefaultColumnsFromFieldUsage(
 ): string[] | null {
   if (!summary?.hasUsageData || !summary.fieldList?.length) return null;
   const columns = summary.fieldList
-    .filter((field) => field.usage > 0 && !field.name.startsWith('_') && !isKeywordSubfield(field.name))
+    .filter((field) => field.usage > 0 && isDisplayableSourceField(field.name) && !isMetaDataField(field.name))
     .sort((a, b) => b.usage - a.usage || a.name.localeCompare(b.name))
     .slice(0, maxCols)
     .map((field) => field.name);

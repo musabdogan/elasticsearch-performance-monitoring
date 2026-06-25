@@ -1,6 +1,6 @@
 {
   "name": "elasticsearch-performance-monitoring-extension",
-  "version": "1.15.0",
+  "version": "1.16.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -10,6 +10,10 @@
     "preview": "vite preview",
     "lint": "eslint src --ext ts,tsx",
     "verify:api-gateway": "node scripts/verify-api-gateway.cjs",
+    "verify:query-chart-failover": "node scripts/verify-query-chart-failover.cjs",
+    "verify:discover-filters": "node scripts/verify-discover-filters.cjs",
+    "verify:discover-field-groups": "node scripts/verify-discover-field-groups.cjs",
+    "verify:discover-top-values": "node scripts/verify-discover-top-values.cjs",
     "pack": "npm run build && node scripts/pack-extension.cjs"
   },
   "dependencies": {

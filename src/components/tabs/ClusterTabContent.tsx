@@ -155,7 +155,7 @@ export function ClusterTabContent({
   onRefreshStateChange?: (loading: boolean) => void;
   onOpenNodeDetails?: (nodeName: string) => void;
 } = {}) {
-  const { activeCluster, isClusterUnreachable } = useMonitoring();
+  const { activeCluster, activeClusterConnectionKey, isClusterUnreachable } = useMonitoring();
   const clusterKey = activeCluster?.baseUrl ?? activeCluster?.label ?? '';
   const lastInitializedClusterKeyRef = useRef<string | null>(null);
 
@@ -219,7 +219,7 @@ export function ClusterTabContent({
     } finally {
       setHealthLoading(false);
     }
-  }, [activeCluster, isClusterUnreachable]);
+  }, [activeClusterConnectionKey, isClusterUnreachable]);
 
   const fetchUnassigned = useCallback(async () => {
     if (!activeCluster || isClusterUnreachable) return;
@@ -235,7 +235,7 @@ export function ClusterTabContent({
     } finally {
       setUnassignedLoading(false);
     }
-  }, [activeCluster, isClusterUnreachable]);
+  }, [activeClusterConnectionKey, isClusterUnreachable]);
 
   const fetchPending = useCallback(async () => {
     if (!activeCluster || isClusterUnreachable) return;
@@ -251,7 +251,7 @@ export function ClusterTabContent({
     } finally {
       setPendingLoading(false);
     }
-  }, [activeCluster, isClusterUnreachable]);
+  }, [activeClusterConnectionKey, isClusterUnreachable]);
 
   const fetchRecovery = useCallback(async () => {
     if (!activeCluster || isClusterUnreachable) return;
@@ -267,7 +267,7 @@ export function ClusterTabContent({
     } finally {
       setRecoveryLoading(false);
     }
-  }, [activeCluster, isClusterUnreachable]);
+  }, [activeClusterConnectionKey, isClusterUnreachable]);
 
   useEffect(() => {
     if (!clusterKey || isClusterUnreachable) return;
@@ -377,7 +377,7 @@ export function ClusterTabContent({
         });
       }
     },
-    [activeCluster, isClusterUnreachable]
+    [activeClusterConnectionKey, isClusterUnreachable]
   );
 
   useEffect(() => {
@@ -465,7 +465,7 @@ export function ClusterTabContent({
     };
     window.addEventListener('refreshCluster', onRefreshCluster);
     return () => window.removeEventListener('refreshCluster', onRefreshCluster);
-  }, [activeCluster, onRefreshStateChange, fetchHealth, fetchUnassigned, fetchPending, fetchRecovery]);
+  }, [activeClusterConnectionKey, onRefreshStateChange, fetchHealth, fetchUnassigned, fetchPending, fetchRecovery]);
   const allClearEmpty = <AllClearEmpty />;
 
   const filteredUnassigned = useMemo(() => {

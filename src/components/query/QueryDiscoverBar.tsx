@@ -6,7 +6,7 @@ import {
 } from '@/components/query/QueryIndexPatternPicker';
 import { normalizeQueryIndexPattern, type QueryMode } from '@/utils/querySearch';
 
-type QueryDiscoverBarProps = {
+export type QueryDiscoverBarProps = {
   indexPattern: string;
   searchIndexPattern: string;
   indexPickerDisplayLabel?: string;
@@ -21,22 +21,22 @@ type QueryDiscoverBarProps = {
   loading: boolean;
 };
 
-export function QueryDiscoverBar({
+export function QueryDiscoverIndexColumn({
   indexPattern,
-  searchIndexPattern,
   indexPickerDisplayLabel,
   onIndexPatternCommit,
   patternOptions,
-  onIndexPickerOpen,
-  mode,
-  onModeChange,
-  query,
-  onQueryChange,
-  onSearch,
-  loading
-}: QueryDiscoverBarProps) {
+  onIndexPickerOpen
+}: Pick<
+  QueryDiscoverBarProps,
+  | 'indexPattern'
+  | 'indexPickerDisplayLabel'
+  | 'onIndexPatternCommit'
+  | 'patternOptions'
+  | 'onIndexPickerOpen'
+>) {
   return (
-    <div className="flex flex-wrap items-center gap-2 rounded-lg border border-gray-200 bg-white px-2 py-2 shadow-sm dark:border-gray-700 dark:bg-gray-900/40">
+    <div className="flex min-h-[2.25rem] w-full min-w-0 items-center">
       <QueryIndexPatternPicker
         value={indexPattern}
         displayLabel={indexPickerDisplayLabel}
@@ -46,7 +46,24 @@ export function QueryDiscoverBar({
           if (open) onIndexPickerOpen?.();
         }}
       />
+    </div>
+  );
+}
 
+export function QueryDiscoverSearchRow({
+  searchIndexPattern,
+  mode,
+  onModeChange,
+  query,
+  onQueryChange,
+  onSearch,
+  loading
+}: Pick<
+  QueryDiscoverBarProps,
+  'searchIndexPattern' | 'mode' | 'onModeChange' | 'query' | 'onQueryChange' | 'onSearch' | 'loading'
+>) {
+  return (
+    <>
       {mode === 'simple' && (
         <>
           <div className="relative min-w-[200px] flex-1">
@@ -92,6 +109,18 @@ export function QueryDiscoverBar({
           </button>
         ))}
       </div>
+    </>
+  );
+}
+
+/** Standalone card layout (legacy); Query tab uses split columns inside DocumentSearchWorkspace. */
+export function QueryDiscoverBar(props: QueryDiscoverBarProps) {
+  return (
+    <div className="flex flex-wrap items-center gap-2 rounded-lg border border-gray-200 bg-white px-2 py-2 shadow-sm dark:border-gray-700 dark:bg-gray-900/40">
+      <div className="min-w-[180px] max-w-[300px] shrink-0">
+        <QueryDiscoverIndexColumn {...props} />
+      </div>
+      <QueryDiscoverSearchRow {...props} />
     </div>
   );
 }

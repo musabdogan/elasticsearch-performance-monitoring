@@ -276,12 +276,134 @@ export function resolveTimeSearchResolution(
   return resolveTimeRangeForIndex(range, bounds);
 }
 
+export type ExpandedChartTimeSearchContext = {
+  timeField: string;
+  timeFieldFormat: string | null;
+  resolution: TimeRangeResolution;
+};
+
+/**
+ * When the time chart is expanded, every _search must include a time constraint.
+ * Never returns resolution.mode === 'skip' (falls back to filter or match_none).
+ */
+export function resolveExpandedChartTimeSearchContext(
+  preset: TimeRangePreset,
+  timeField: string,
+  brushRange: TimeRangeFilter | null,
+  bounds: TimeFieldBounds | null,
+  timeFieldFormat: string | null = null
+): ExpandedChartTimeSearchContext {
+  const range = resolveChartFilterRange(preset, timeField, brushRange);
+  let resolution = resolveTimeSearchResolution(preset, range, bounds, brushRange != null);
+
+  if (resolution.mode === 'skip') {
+    if (hasValidTimeFieldBounds(bounds)) {
+      const fullRange = buildAllHistogramRange(timeField, bounds);
+      resolution = fullRange
+        ? { mode: 'filter', range: fullRange, histogramRange: fullRange }
+        : { mode: 'none' };
+    } else {
+      resolution = { mode: 'none' };
+    }
+  }
+
+  return { timeField, timeFieldFormat, resolution };
+}
+
+import { isDateMappingField } from '@/utils/fieldMappingTypes';
+
+export function mergeChartTimeFieldOptions(
+  mappingDateFields: string[],
+  candidateFields: string[],
+  mappings: Record<string, { mappings?: { properties?: Record<string, unknown> } }> | null | undefined
+): string[] {
+  const merged = new Set(mappingDateFields);
+  for (const field of candidateFields) {
+    if (field && isDateMappingField(field, mappings)) merged.add(field);
+  }
+  return sortTimeFieldNames([...merged]);
+}
+
 export function needsTimeFieldBounds(
   preset: TimeRangePreset,
   brushRange: TimeRangeFilter | null
 ): boolean {
   if (brushRange != null) return false;
   return preset === 'all';
+}
+
+/** Time field used when the chart is first expanded (open probe). */
+export const CHART_PROBE_TIME_FIELD = '@timestamp';
+
+export const STANDARD_CHART_TIME_FIELDS = ['@timestamp', 'timestamp'] as const;
+
+export function hasStandardChartTimeField(fields: string[]): boolean {
+  const set = new Set(fields);
+  return STANDARD_CHART_TIME_FIELDS.some((field) => set.has(field));
+}
+
+export function resolveStandardChartTimeField(fields: string[]): string | null {
+  if (fields.includes('@timestamp')) return '@timestamp';
+  if (fields.includes('timestamp')) return 'timestamp';
+  return null;
+}
+
+/** Presets tried on chart open — on {@link CHART_PROBE_TIME_FIELD} or `timestamp`. */
+export const CHART_PROBE_PRESETS = ['15m', '24h', '30d', '1y', 'all'] as const;
+export type ChartProbePreset = (typeof CHART_PROBE_PRESETS)[number];
+
+export function buildSelectTimestampFieldMessage(): string {
+  return 'Please select a timestamp field above.';
+}
+
+/** e.g. "in last 15 minutes", "in last 24 hours", "in all time" */
+export function formatEmptyChartRangePhrase(preset?: TimeRangePreset): string {
+  if (!preset) return 'in the selected time range';
+
+  const normalized = normalizeChartPreset(preset);
+  if (isAllTimePreset(normalized)) return 'in all time';
+  if (isSearchResultsPreset(normalized)) return 'in the current search results';
+
+  const entry = RELATIVE_PRESET_RANGE[normalized as RelativeTimeRangePreset];
+  if (entry) {
+    const tail = entry.label.replace(/^Last /i, 'last ');
+    return `in ${tail}`;
+  }
+
+  return 'in the selected time range';
+}
+
+export function buildNoTimestampChartDataMessage(
+  field: string = CHART_PROBE_TIME_FIELD,
+  preset?: TimeRangePreset
+): string {
+  const rangePhrase = formatEmptyChartRangePhrase(preset);
+  const normalized = preset ? normalizeChartPreset(preset) : null;
+  const action =
+    normalized && isAllTimePreset(normalized)
+      ? 'Select another date time field above.'
+      : 'Extend the time range or select another date time field above.';
+  return `There is no data for the ${field} field ${rangePhrase}. ${action}`;
+}
+
+export type ChartProbeAdvance =
+  | { action: 'success' }
+  | { action: 'retry'; preset: ChartProbePreset }
+  | { action: 'exhausted' };
+
+/** Advance chart open probe: 15m → 24h → 30d → 1y → all on @timestamp. */
+export function advanceChartProbeStep(input: {
+  presetStep: ChartProbePreset;
+  hasData: boolean;
+}): ChartProbeAdvance {
+  if (input.hasData) return { action: 'success' };
+
+  const index = CHART_PROBE_PRESETS.indexOf(input.presetStep);
+  if (index < 0 || index >= CHART_PROBE_PRESETS.length - 1) {
+    return { action: 'exhausted' };
+  }
+
+  return { action: 'retry', preset: CHART_PROBE_PRESETS[index + 1] };
 }
 
 /** True when min/max aggregations returned usable numeric bounds for the time field. */
@@ -539,6 +661,12 @@ function pad2(n: number): string {
   return String(n).padStart(2, '0');
 }
 
+/** Wall-clock components in the browser timezone (matches date_histogram time_zone). */
+function formatMsInBrowserLocal(ms: number): string {
+  const d = new Date(ms);
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}`;
+}
+
 /** Format absolute ms for ES using the mapped date format when known. */
 export function formatAbsoluteDateMsForField(
   ms: number,
@@ -554,7 +682,7 @@ export function formatAbsoluteDateMsForField(
   }
 
   if (fmt.includes('yyyy-MM-dd') && fmt.includes('HH:mm:ss')) {
-    return `${d.getUTCFullYear()}-${pad2(d.getUTCMonth() + 1)}-${pad2(d.getUTCDate())} ${pad2(d.getUTCHours())}:${pad2(d.getUTCMinutes())}:${pad2(d.getUTCSeconds())}`;
+    return formatMsInBrowserLocal(ms);
   }
 
   if (fmt.includes('strict_date_optional_time') || fmt.includes('date_time')) {
@@ -811,6 +939,13 @@ function resolveDateHistogramAggFormat(fieldFormat: string | null | undefined): 
   return undefined;
 }
 
+export function histogramIntervalToEsFields(interval: HistogramInterval): Record<string, string> {
+  if (interval.kind === 'calendar_interval') {
+    return { calendar_interval: interval.value };
+  }
+  return { fixed_interval: interval.value };
+}
+
 function buildDateHistogramAgg(
   timeField: string,
   interval: HistogramInterval,
@@ -826,11 +961,7 @@ function buildDateHistogramAgg(
   const aggFormat = resolveDateHistogramAggFormat(fieldFormat);
   if (aggFormat) dateHistogram.format = aggFormat;
 
-  if (interval.kind === 'calendar_interval') {
-    dateHistogram.calendar_interval = interval.value;
-  } else {
-    dateHistogram.fixed_interval = interval.value;
-  }
+  Object.assign(dateHistogram, histogramIntervalToEsFields(interval));
 
   if (windowRange?.field) {
     const absolute = resolveAbsoluteTimeRangeMs(windowRange);
